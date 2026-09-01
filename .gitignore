@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# Research data — NEVER commit any of this.
+#
+# This repository is a public code-only copy. The real case log, its derived
+# database, and the departmental image share stay out of version control
+# permanently. If you are adapting this for your own institution, keep these
+# rules in place.
+# ---------------------------------------------------------------------------
+
+# Source case logs (any spreadsheet, anywhere)
+*.xlsx
+*.xls
+*.xlsm
+~$*
+patient_log.xlsx
+
+# Derived data
+*.db
+*.sqlite
+*.sqlite3
+metadata.db
+patients.db
+data/
+*.csv
+
+# Image share and any real case photography
+mock_o_drive/
+o_drive/
+static/face-reference.jpg
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Sample data is the one deliberate exception — it is fabricated, not real.
+# ---------------------------------------------------------------------------
+!sample_data/
+!sample_data/*.xlsx
+
+# ---------------------------------------------------------------------------
+# Environment / tooling
+# ---------------------------------------------------------------------------
+.DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.claude/
+.vercel/
+node_modules/

@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Region Editor</title>
+    <style>
+      :root {
+        --navy: #232d4b;
+        --orange: #e57200;
+        --border: #d7e0ea;
+        --bg: #f4f7fb;
+        --muted: #63698b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: #1b2338;
+      }
+      header {
+        background: var(--navy);
+        color: #fff;
+        padding: 0.9rem 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      header h1 {
+        font-size: 1.15rem;
+        margin: 0;
+      }
+      header p {
+        margin: 0.2rem 0 0;
+        font-size: 0.85rem;
+        opacity: 0.75;
+      }
+      header select {
+        background: #fff;
+      }
+      .layout {
+        display: flex;
+        gap: 1.5rem;
+        padding: 1.5rem;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .canvas-wrap {
+        position: relative;
+        width: 480px;
+        max-width: 100%;
+        background: #d7dde5;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        box-shadow: 0 10px 30px rgba(20, 25, 45, 0.12);
+        touch-action: none;
+      }
+      .canvas-wrap img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        user-select: none;
+        pointer-events: none;
+      }
+      svg.overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+      }
+      .shape-poly {
+        fill: rgba(35, 45, 75, 0.14);
+        stroke: rgba(35, 45, 75, 0.55);
+        stroke-width: 1.4;
+      }
+      .shape-poly.is-active {
+        fill: rgba(229, 114, 0, 0.28);
+        stroke: var(--orange);
+        stroke-width: 2;
+      }
+      .draft-line {
+        fill: none;
+        stroke: var(--orange);
+        stroke-width: 1.6;
+        stroke-dasharray: 4 3;
+      }
+      .vertex {
+        fill: #fff;
+        stroke: var(--orange);
+        stroke-width: 2;
+        cursor: grab;
+      }
+      .vertex:hover {
+        fill: var(--orange);
+      }
+      .label-dot {
+        fill: var(--orange);
+        stroke: #fff;
+        stroke-width: 1;
+      }
+      .sidebar {
+        flex: 1 1 340px;
+        min-width: 300px;
+        display: grid;
+        gap: 1rem;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        box-shadow: 0 1px 2px rgba(20, 25, 45, 0.05);
+      }
+      .panel h2 {
+        margin: 0 0 0.7rem;
+        font-size: 0.95rem;
+        color: var(--navy);
+      }
+      .row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      select,
+      button {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.55rem 0.8rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #fff;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--orange);
+        color: #fff;
+        border-color: var(--orange);
+        font-weight: 600;
+      }
+      button.primary:hover {
+        background: #cf6600;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.danger {
+        color: #b42318;
+      }
+      .hint {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin: 0.5rem 0 0;
+        line-height: 1.5;
+      }
+      .shape-list {
+        display: grid;
+        gap: 0.4rem;
+        max-height: 260px;
+        overflow-y: auto;
+      }
+      .shape-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.4rem 0.6rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        font-size: 0.85rem;
+        cursor: pointer;
+      }
+      .shape-row.is-active {
+        border-color: var(--orange);
+        background: #fff6ee;
+      }
+      .shape-row button {
+        padding: 0.2rem 0.5rem;
+        font-size: 0.75rem;
+      }
+      #status-msg {
+        font-size: 0.85rem;
+        margin: 0;
+        min-height: 1.2em;
+      }
+      #status-msg.error {
+        color: #b42318;
+      }
+      #status-msg.ok {
+        color: #1c7a3e;
+      }
+      textarea {
+        width: 100%;
+        min-height: 120px;
+        font-family: ui-monospace, monospace;
+        font-size: 0.72rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        padding: 0.6rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Face Region Editor</h1>
+        <p>Drag points to line them up with the photo, then save back into the app.</p>
+      </div>
+      <div class="row">
+        <select id="diagram-select"></select>
+        <label class="row" style="gap: 0.35rem; color: #fff; font-size: 0.85rem">
+          <input type="checkbox" id="mirror-toggle" checked />
+          Mirror left/right
+        </label>
+        <button id="undo-btn">Undo</button>
+        <button id="reset-btn" class="danger">Reset diagram</button>
+        <button id="save-btn" class="primary">Save to app</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div class="canvas-wrap" id="canvas-wrap">
+        <img id="photo-img" src="/static/face-reference.jpg" alt="" draggable="false" />
+        <svg class="overlay" id="overlay" viewBox="0 0 320 440"></svg>
+      </div>
+
+      <div class="sidebar">
+        <div class="panel">
+          <h2>Add a shape</h2>
+          <div class="row">
+            <select id="region-select"></select>
+            <button id="draw-btn">Draw new shape</button>
+            <button id="finish-draw-btn" disabled>Finish shape</button>
+          </div>
+          <p class="hint">
+            Click <strong>Draw new shape</strong>, then click points on the photo to trace the
+            region. Click <strong>Finish shape</strong> (or double-click) when done — need at
+            least 3 points. For left/right regions (temple, periorbital, ear, cheek, etc.) you
+            only need to draw one side — with <strong>Mirror left/right</strong> on, the other
+            side is created and kept in sync automatically.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h2>Selected shape</h2>
+          <div class="row">
+            <button id="add-point-btn" disabled>Add point mode</button>
+            <button id="delete-shape-btn" class="danger" disabled>Delete shape</button>
+          </div>
+          <p class="hint">
+            Drag the white handles to move a point. Right-click (or long-press) a handle to
+            remove it. With <strong>Add point mode</strong> on, click along the outline to insert
+            a new point there.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h2>Shapes (<span id="shape-count">0</span>)</h2>
+          <div class="shape-list" id="shape-list"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Save status</h2>
+          <p id="status-msg"></p>
+          <div class="row">
+            <button id="copy-btn">Copy JSON</button>
+          </div>
+          <textarea id="output-json" readonly hidden></textarea>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const DIAGRAM_CONFIGS = {
+        face: {
+          label: "Face",
+          viewBoxW: 320,
+          viewBoxH: 440,
+          objectPosition: "center 8%",
+          transform: "none",
+          transformOrigin: "50% 50%",
+          regionLabels: {
+            scalp: "Scalp",
+            forehead: "Forehead",
+            temple: "Temple",
+            periorbital: "Periorbital",
+            ear: "Ear",
+            cheek: "Cheek",
+            nose: "Nose",
+            lip: "Lip",
+            chin: "Chin",
+            neck: "Neck",
+          },
+          symmetricRegions: ["temple", "periorbital", "ear", "cheek"],
+        },
+        nose: {
+          label: "Nose (sub-regions)",
+          viewBoxW: 320,
+          viewBoxH: 360,
+          objectPosition: "center 45%",
+          transform: "scale(2.2)",
+          transformOrigin: "center 48%",
+          regionLabels: {
+            nose_dorsum: "Dorsum",
+            nose_sidewall: "Sidewall",
+            nose_tip: "Tip",
+            nose_ala: "Ala",
+            nose_columella: "Columella",
+          },
+          symmetricRegions: ["nose_sidewall", "nose_ala"],
+        },
+        periorbital: {
+          label: "Periorbital (sub-regions)",
+          viewBoxW: 320,
+          viewBoxH: 300,
+          objectPosition: "center 36%",
+          transform: "scale(1.5)",
+          transformOrigin: "center 40%",
+          regionLabels: {
+            peri_brow: "Brow",
+            peri_upper_lid: "Upper Lid",
+            peri_lower_lid: "Lower Lid",
+            peri_medial_canthus: "Medial Canthus",
+            peri_lateral_canthus: "Lateral Canthus",
+            peri_glabella: "Glabella",
+          },
+          symmetricRegions: [
+            "peri_brow",
+            "peri_upper_lid",
+            "peri_lower_lid",
+            "peri_medial_canthus",
+            "peri_lateral_canthus",
+          ],
+        },
+        lip: {
+          label: "Lip (sub-regions)",
+          viewBoxW: 320,
+          viewBoxH: 280,
+          objectPosition: "center 68%",
+          transform: "scale(2.15)",
+          transformOrigin: "center 70%",
+          regionLabels: {
+            lip_upper: "Upper",
+            lip_lower: "Lower",
+            lip_vermillion: "Vermillion",
+            lip_philtrum: "Philtrum",
+            lip_commissure: "Commissure",
+          },
+          symmetricRegions: ["lip_commissure"],
+        },
+      };
+
+      const overlay = document.getElementById("overlay");
+      const photoImg = document.getElementById("photo-img");
+      const diagramSelect = document.getElementById("diagram-select");
+      const regionSelect = document.getElementById("region-select");
+      const drawBtn = document.getElementById("draw-btn");
+      const finishDrawBtn = document.getElementById("finish-draw-btn");
+      const addPointBtn = document.getElementById("add-point-btn");
+      const deleteShapeBtn = document.getElementById("delete-shape-btn");
+      const shapeListEl = document.getElementById("shape-list");
+      const shapeCountEl = document.getElementById("shape-count");
+      const statusMsg = document.getElementById("status-msg");
+      const undoBtn = document.getElementById("undo-btn");
+      const resetBtn = document.getElementById("reset-btn");
+      const saveBtn = document.getElementById("save-btn");
+      const copyBtn = document.getElementById("copy-btn");
+      const outputJson = document.getElementById("output-json");
+      const mirrorToggle = document.getElementById("mirror-toggle");
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function isSymmetricRegion(region) {
+        const symmetric = DIAGRAM_CONFIGS[currentDiagram].symmetricRegions || [];
+        return symmetric.includes(region);
+      }
+
+      function mirrorX(x) {
+        return Math.round((DIAGRAM_CONFIGS[currentDiagram].viewBoxW - x) * 10) / 10;
+      }
+
+      function mirrorPoints(points) {
+        return points.map(([x, y]) => [mirrorX(x), y]);
+      }
+
+      // Keeps a symmetric region's other-side shape in sync with the one just edited.
+      // Creates the twin if it doesn't exist yet, so a symmetric region only needs
+      // to be drawn/edited once.
+      function syncMirror(sourceIndex) {
+        if (!mirrorToggle.checked) return;
+        const source = shapes[sourceIndex];
+        if (!source || !isSymmetricRegion(source.region)) return;
+
+        const mirroredPoints = mirrorPoints(source.points);
+        const mirroredLabelPos = [mirrorX(source.labelPos[0]), source.labelPos[1]];
+
+        const twinIndex = shapes.findIndex(
+          (s, i) => i !== sourceIndex && s.region === source.region
+        );
+
+        if (twinIndex === -1) {
+          shapes.push({
+            region: source.region,
+            label: source.label,
+            points: mirroredPoints,
+            labelPos: mirroredLabelPos,
+          });
+        } else {
+          shapes[twinIndex] = {
+            ...shapes[twinIndex],
+            points: mirroredPoints,
+            labelPos: mirroredLabelPos,
+          };
+        }
+      }
+
+      const stateByDiagram = {};
+      Object.keys(DIAGRAM_CONFIGS).forEach((key) => {
+        stateByDiagram[key] = { shapes: [], activeIndex: -1, undoStack: [] };
+      });
+
+      async function fetchCurrentShapes() {
+        const response = await fetch("/api/dev/face-regions");
+        if (!response.ok) {
+          throw new Error(`Failed to load current shapes (${response.status}).`);
+        }
+        return response.json();
+      }
+
+      let currentDiagram = "face";
+      let shapes = stateByDiagram.face.shapes;
+      let activeIndex = stateByDiagram.face.activeIndex;
+      let undoStack = stateByDiagram.face.undoStack;
+      let drawing = null; // { region, points }
+      let addPointMode = false;
+      let dragTarget = null; // { pointIndex }
+
+      Object.entries(DIAGRAM_CONFIGS).forEach(([key, cfg]) => {
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = cfg.label;
+        diagramSelect.appendChild(opt);
+      });
+
+      function populateRegionSelect() {
+        regionSelect.innerHTML = "";
+        Object.entries(DIAGRAM_CONFIGS[currentDiagram].regionLabels).forEach(([id, label]) => {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = label;
+          regionSelect.appendChild(opt);
+        });
+      }
+
+      function applyDiagramVisuals() {
+        const cfg = DIAGRAM_CONFIGS[currentDiagram];
+        overlay.setAttribute("viewBox", `0 0 ${cfg.viewBoxW} ${cfg.viewBoxH}`);
+        document.getElementById("canvas-wrap").style.aspectRatio = `${cfg.viewBoxW} / ${cfg.viewBoxH}`;
+        photoImg.style.objectPosition = cfg.objectPosition;
+        photoImg.style.transform = cfg.transform;
+        photoImg.style.transformOrigin = cfg.transformOrigin;
+      }
+
+      function saveCurrentDiagramState() {
+        stateByDiagram[currentDiagram] = { shapes, activeIndex, undoStack };
+      }
+
+      function switchDiagram(key) {
+        if (key === currentDiagram) return;
+        saveCurrentDiagramState();
+        const state = stateByDiagram[key];
+        currentDiagram = key;
+        shapes = state.shapes;
+        activeIndex = state.activeIndex;
+        undoStack = state.undoStack;
+        drawing = null;
+        addPointMode = false;
+        finishDrawBtn.disabled = true;
+        applyDiagramVisuals();
+        populateRegionSelect();
+        setStatus("", false);
+        render();
+      }
+
+      function pushUndo() {
+        undoStack.push(JSON.stringify(shapes));
+        if (undoStack.length > 60) {
+          undoStack.shift();
+        }
+      }
+
+      function undo() {
+        if (!undoStack.length) return;
+        shapes = JSON.parse(undoStack.pop());
+        stateByDiagram[currentDiagram].shapes = shapes;
+        if (activeIndex >= shapes.length) {
+          activeIndex = shapes.length - 1;
+        }
+        render();
+      }
+
+      function centroid(points) {
+        const n = points.length;
+        const cx = points.reduce((sum, p) => sum + p[0], 0) / n;
+        const cy = points.reduce((sum, p) => sum + p[1], 0) / n;
+        return [Math.round(cx * 10) / 10, Math.round(cy * 10) / 10];
+      }
+
+      function svgPoint(evt) {
+        const pt = overlay.createSVGPoint();
+        pt.x = evt.clientX;
+        pt.y = evt.clientY;
+        const ctm = overlay.getScreenCTM().inverse();
+        const transformed = pt.matrixTransform(ctm);
+        return [Math.round(transformed.x * 10) / 10, Math.round(transformed.y * 10) / 10];
+      }
+
+      function pointsToAttr(points) {
+        return points.map((p) => p.join(",")).join(" ");
+      }
+
+      function distToSegment(p, a, b) {
+        const [px, py] = p;
+        const [ax, ay] = a;
+        const [bx, by] = b;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const lenSq = dx * dx + dy * dy;
+        let t = lenSq === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx;
+        const cy = ay + t * dy;
+        return Math.hypot(px - cx, py - cy);
+      }
+
+      function render() {
+        overlay.innerHTML = "";
+
+        shapes.forEach((shape, i) => {
+          const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          poly.setAttribute("points", pointsToAttr(shape.points));
+          poly.setAttribute("class", "shape-poly" + (i === activeIndex ? " is-active" : ""));
+          poly.style.cursor = "pointer";
+          poly.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            if (addPointMode && i === activeIndex) {
+              return;
+            }
+            selectShape(i);
+          });
+          overlay.appendChild(poly);
+
+          const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          dot.setAttribute("cx", shape.labelPos[0]);
+          dot.setAttribute("cy", shape.labelPos[1]);
+          dot.setAttribute("r", 2);
+          dot.setAttribute("class", "label-dot");
+          overlay.appendChild(dot);
+        });
+
+        if (activeIndex >= 0 && shapes[activeIndex]) {
+          shapes[activeIndex].points.forEach((p, pointIndex) => {
+            const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            handle.setAttribute("cx", p[0]);
+            handle.setAttribute("cy", p[1]);
+            handle.setAttribute("r", 4);
+            handle.setAttribute("class", "vertex");
+            handle.addEventListener("pointerdown", (evt) => {
+              evt.stopPropagation();
+              pushUndo();
+              dragTarget = { pointIndex };
+              handle.setPointerCapture(evt.pointerId);
+            });
+            handle.addEventListener("contextmenu", (evt) => {
+              evt.preventDefault();
+              evt.stopPropagation();
+              if (shapes[activeIndex].points.length <= 3) {
+                setStatus("A shape needs at least 3 points.", true);
+                return;
+              }
+              pushUndo();
+              shapes[activeIndex].points.splice(pointIndex, 1);
+              shapes[activeIndex].labelPos = centroid(shapes[activeIndex].points);
+              syncMirror(activeIndex);
+              render();
+            });
+            overlay.appendChild(handle);
+          });
+        }
+
+        if (drawing) {
+          const pts = drawing.points;
+          if (pts.length) {
+            const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+            poly.setAttribute("points", pointsToAttr(pts));
+            poly.setAttribute("class", "draft-line");
+            overlay.appendChild(poly);
+            pts.forEach((p) => {
+              const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+              dot.setAttribute("cx", p[0]);
+              dot.setAttribute("cy", p[1]);
+              dot.setAttribute("r", 3.5);
+              dot.setAttribute("class", "vertex");
+              overlay.appendChild(dot);
+            });
+          }
+        }
+
+        renderSidebar();
+      }
+
+      function renderSidebar() {
+        shapeCountEl.textContent = shapes.length;
+        shapeListEl.innerHTML = "";
+        shapes.forEach((shape, i) => {
+          const row = document.createElement("div");
+          row.className = "shape-row" + (i === activeIndex ? " is-active" : "");
+          const label = document.createElement("span");
+          label.textContent = `${shape.label} #${i + 1} (${shape.points.length} pts)`;
+          const del = document.createElement("button");
+          del.textContent = "Delete";
+          del.className = "danger";
+          del.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            deleteShape(i);
+          });
+          row.appendChild(label);
+          row.appendChild(del);
+          row.addEventListener("click", () => selectShape(i));
+          shapeListEl.appendChild(row);
+        });
+
+        addPointBtn.disabled = activeIndex < 0;
+        deleteShapeBtn.disabled = activeIndex < 0;
+        addPointBtn.textContent = addPointMode ? "Add point mode (on)" : "Add point mode";
+      }
+
+      function selectShape(i) {
+        activeIndex = i;
+        addPointMode = false;
+        render();
+      }
+
+      function deleteShape(i) {
+        pushUndo();
+        shapes.splice(i, 1);
+        if (activeIndex === i) {
+          activeIndex = -1;
+        } else if (activeIndex > i) {
+          activeIndex -= 1;
+        }
+        render();
+      }
+
+      function setStatus(message, isError) {
+        statusMsg.textContent = message;
+        statusMsg.className = isError ? "error" : "ok";
+      }
+
+      diagramSelect.addEventListener("change", () => {
+        switchDiagram(diagramSelect.value);
+      });
+
+      drawBtn.addEventListener("click", () => {
+        pushUndo();
+        drawing = { region: regionSelect.value, points: [] };
+        activeIndex = -1;
+        addPointMode = false;
+        finishDrawBtn.disabled = false;
+        setStatus("Click points on the photo to trace the region, then finish.", false);
+        render();
+      });
+
+      finishDrawBtn.addEventListener("click", finishDrawing);
+
+      function finishDrawing() {
+        if (!drawing) return;
+        if (drawing.points.length < 3) {
+          setStatus("Add at least 3 points before finishing.", true);
+          return;
+        }
+        const labels = DIAGRAM_CONFIGS[currentDiagram].regionLabels;
+        const region = drawing.region;
+
+        // Redrawing a symmetric region from scratch replaces both old sides —
+        // the freshly drawn shape becomes the new source of truth and its
+        // mirrored twin is regenerated from it below.
+        if (isSymmetricRegion(region)) {
+          for (let i = shapes.length - 1; i >= 0; i--) {
+            if (shapes[i].region === region) {
+              shapes.splice(i, 1);
+            }
+          }
+        }
+
+        shapes.push({
+          region,
+          label: labels[region] || region,
+          points: drawing.points,
+          labelPos: centroid(drawing.points),
+        });
+        activeIndex = shapes.length - 1;
+        drawing = null;
+        finishDrawBtn.disabled = true;
+        syncMirror(activeIndex);
+        setStatus(
+          isSymmetricRegion(region) ? "Shape added — mirrored to the other side." : "Shape added.",
+          false
+        );
+        render();
+      }
+
+      addPointBtn.addEventListener("click", () => {
+        if (activeIndex < 0) return;
+        addPointMode = !addPointMode;
+        renderSidebar();
+      });
+
+      deleteShapeBtn.addEventListener("click", () => {
+        if (activeIndex < 0) return;
+        deleteShape(activeIndex);
+      });
+
+      overlay.addEventListener("click", (evt) => {
+        const p = svgPoint(evt);
+
+        if (drawing) {
+          drawing.points.push(p);
+          render();
+          return;
+        }
+
+        if (addPointMode && activeIndex >= 0) {
+          const pts = shapes[activeIndex].points;
+          let bestDist = Infinity;
+          let bestIdx = pts.length;
+          for (let i = 0; i < pts.length; i++) {
+            const a = pts[i];
+            const b = pts[(i + 1) % pts.length];
+            const d = distToSegment(p, a, b);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i + 1;
+            }
+          }
+          pushUndo();
+          pts.splice(bestIdx, 0, p);
+          shapes[activeIndex].labelPos = centroid(pts);
+          syncMirror(activeIndex);
+          render();
+        }
+      });
+
+      overlay.addEventListener("dblclick", (evt) => {
+        evt.preventDefault();
+        if (drawing) {
+          finishDrawing();
+        }
+      });
+
+      overlay.addEventListener("pointermove", (evt) => {
+        if (!dragTarget || activeIndex < 0) return;
+        const p = svgPoint(evt);
+        shapes[activeIndex].points[dragTarget.pointIndex] = p;
+        shapes[activeIndex].labelPos = centroid(shapes[activeIndex].points);
+        syncMirror(activeIndex);
+        render();
+      });
+
+      overlay.addEventListener("pointerup", () => {
+        dragTarget = null;
+      });
+
+      undoBtn.addEventListener("click", undo);
+
+      resetBtn.addEventListener("click", async () => {
+        if (
+          !confirm(
+            `Discard local edits to the ${DIAGRAM_CONFIGS[currentDiagram].label} diagram and reload it from the app's currently saved state?`
+          )
+        )
+          return;
+        resetBtn.disabled = true;
+        try {
+          const data = await fetchCurrentShapes();
+          pushUndo();
+          shapes = clone(data[currentDiagram] || []);
+          stateByDiagram[currentDiagram].shapes = shapes;
+          activeIndex = shapes.length ? 0 : -1;
+          drawing = null;
+          finishDrawBtn.disabled = true;
+          render();
+          setStatus("Reloaded from the app's currently saved state.", false);
+        } catch (error) {
+          setStatus(`Reset failed: ${error.message}`, true);
+        } finally {
+          resetBtn.disabled = false;
+        }
+      });
+
+      copyBtn.addEventListener("click", async () => {
+        const text = JSON.stringify(shapes, null, 2);
+        outputJson.value = text;
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("Copied shape JSON to clipboard.", false);
+        } catch (error) {
+          outputJson.hidden = false;
+          setStatus("Copy failed — select the text below manually.", true);
+        }
+      });
+
+      saveBtn.addEventListener("click", async () => {
+        saveBtn.disabled = true;
+        setStatus("Saving…", false);
+        try {
+          const response = await fetch("/api/dev/face-regions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ diagram: currentDiagram, shapes }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.detail || "Save failed.");
+          }
+          setStatus(
+            `Saved ${data.shapeCount} shapes for "${DIAGRAM_CONFIGS[currentDiagram].label}" to index.html. Reload the app to see it.`,
+            false
+          );
+        } catch (error) {
+          setStatus(error.message, true);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      document.addEventListener("keydown", (evt) => {
+        if (evt.key === "Escape" && drawing) {
+          drawing = null;
+          finishDrawBtn.disabled = true;
+          setStatus("Drawing cancelled.", false);
+          render();
+        }
+      });
+
+      async function init() {
+        applyDiagramVisuals();
+        populateRegionSelect();
+        setStatus("Loading current shapes from the app…", false);
+        try {
+          const data = await fetchCurrentShapes();
+          Object.keys(DIAGRAM_CONFIGS).forEach((key) => {
+            const shapesForKey = clone(data[key] || []);
+            stateByDiagram[key] = {
+              shapes: shapesForKey,
+              activeIndex: shapesForKey.length ? 0 : -1,
+              undoStack: [],
+            };
+          });
+          shapes = stateByDiagram[currentDiagram].shapes;
+          activeIndex = stateByDiagram[currentDiagram].activeIndex;
+          undoStack = stateByDiagram[currentDiagram].undoStack;
+          setStatus("", false);
+        } catch (error) {
+          setStatus(`Could not load current shapes from the app: ${error.message}`, true);
+        }
+        render();
+      }
+
+      init();
+    </script>
+  </body>
+</html>

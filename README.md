@@ -160,4 +160,3 @@ institutional review, an appropriate hosting environment, and the gaps above clo
 ## License
 
 MIT — see `LICENSE`.
-# facial-reconstruction-atlas

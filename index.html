@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#232D4B" />
+    <title>Facial Reconstruction Atlas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-content">
+        <div>
+          <p class="eyebrow">Facial Plastic Surgery</p>
+          <h1>Facial Reconstruction Atlas</h1>
+          <p class="subtitle">
+            Browse reconstructive cases by anatomy, repair method, flap type, and graft details.
+          </p>
+        </div>
+        <div class="header-actions">
+          <div id="auth-area" class="auth-area"></div>
+          <div class="header-badge" aria-hidden="true">Internal Use Only</div>
+        </div>
+      </div>
+    </header>
+
+    <div id="auth-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+        <div class="modal-header">
+          <h2 id="auth-modal-title">Sign in</h2>
+          <button type="button" class="modal-close" id="auth-modal-close" aria-label="Close">
+            &times;
+          </button>
+        </div>
+        <form id="auth-form">
+          <label>
+            Username
+            <input type="text" id="auth-username" autocomplete="username" required />
+          </label>
+          <label>
+            Password
+            <input type="password" id="auth-password" autocomplete="current-password" required />
+          </label>
+          <p id="auth-error" class="auth-error" hidden></p>
+          <button type="submit" id="auth-submit">Sign in</button>
+        </form>
+        <p class="auth-switch">
+          <span id="auth-switch-text">Don't have an account?</span>
+          <button type="button" id="auth-switch-btn" class="link-btn">Create one</button>
+        </p>
+      </div>
+    </div>
+
+    <div id="case-modal" class="modal-overlay case-modal-overlay" hidden>
+      <div class="case-modal" role="dialog" aria-modal="true" aria-labelledby="case-modal-location">
+        <button
+          type="button"
+          class="modal-close case-modal-close"
+          id="case-modal-close"
+          aria-label="Close"
+        >
+          &times;
+        </button>
+        <div class="case-modal-media">
+          <div class="case-modal-carousel" id="case-modal-carousel"></div>
+          <button
+            type="button"
+            class="case-favorite-btn case-modal-favorite"
+            id="case-modal-favorite"
+            aria-label="Add to favorites"
+          >
+            ☆
+          </button>
+          <button
+            type="button"
+            class="carousel-nav carousel-nav--prev"
+            id="case-modal-prev"
+            aria-label="Previous image"
+            hidden
+          >
+            &lsaquo;
+          </button>
+          <button
+            type="button"
+            class="carousel-nav carousel-nav--next"
+            id="case-modal-next"
+            aria-label="Next image"
+            hidden
+          >
+            &rsaquo;
+          </button>
+          <div class="carousel-dots" id="case-modal-dots"></div>
+        </div>
+        <div class="case-modal-panel">
+          <div class="case-modal-info">
+            <h2 id="case-modal-location" class="case-modal-location"></h2>
+            <p id="case-modal-size" class="case-modal-line" hidden></p>
+            <p id="case-modal-repair" class="case-modal-line" hidden></p>
+            <p id="case-modal-addon" class="case-modal-line case-modal-addon" hidden></p>
+            <p id="case-modal-notes" class="case-modal-notes" hidden></p>
+          </div>
+          <div class="case-modal-comments">
+            <h3 id="case-modal-comments-heading">Comments</h3>
+            <div class="comment-list" id="case-modal-comment-list"></div>
+            <div class="comment-form-slot" id="case-modal-comment-form-slot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main class="app-main">
+      <div class="top-panels">
+      <section class="explorer-panel" aria-label="Anatomical explorer">
+        <div id="diagrams-root" class="diagrams-root">
+          <button
+            type="button"
+            id="anatomy-back-btn"
+            class="anatomy-back-btn"
+            hidden
+          >
+            &larr; Back
+          </button>
+          <div id="face-diagram" class="diagram-wrap diagram-wrap--photo" data-diagram="face">
+            <div class="face-photo-stage face-photo-stage--face">
+              <img
+                class="face-photo"
+                src="/static/face-reference.jpg"
+                alt=""
+                draggable="false"
+              />
+              <svg
+                class="face-overlay"
+                viewBox="0 0 320 440"
+                role="img"
+                aria-label="Face anatomy diagram overlaid on reference portrait"
+              >
+                <!-- FACE_REGIONS_START -->
+                <path
+                  class="anatomy-region"
+                  data-region-id="scalp"
+                  d="M100 76 L121.1 53.9 L146.6 42.9 L173.4 42.9 L198.9 53.9 L220 76 L219.6 81.5 L213.6 86.8 L201.7 91.6 L183.9 95.4 L161.7 93.4 L136.1 95.4 L118.3 91.6 L106.4 86.8 L100.4 81.5 Z"
+                />
+                <text x="160.1" y="76.6" class="diagram-label">Scalp</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="forehead"
+                  d="M100 98 L122.7 93.8 L146 97.1 L173.6 96.1 L200 96.3 L220 98 L220.6 116.3 L216.4 132.8 L206 147.4 L187.7 159.8 L160 170 L132.3 159.8 L114 147.4 L103.6 132.8 L99.4 116.3 Z"
+                />
+                <text x="160.2" y="124.1" class="diagram-label">Forehead</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose"
+                  d="M146 200 L148.9 191.8 L155.9 187.8 L164.1 187.8 L171.1 191.8 L174 200 L185.8 258.3 L187.8 277.4 L168.8 283.6 L150.4 284 L132.4 276.3 L137.4 256.4 Z"
+                />
+                <text x="160.2" y="232.9" class="diagram-label">Nose</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="temple"
+                  d="M96.4 116.3 L71.6 139.7 L62.9 187.9 L106.4 148.4 Z"
+                />
+                <text x="84.3" y="148.1" class="diagram-label">Temple</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="temple"
+                  d="M223.6 116.3 L248.4 139.7 L257.1 187.9 L213.6 148.4 Z"
+                />
+                <text x="235.7" y="148.1" class="diagram-label">Temple</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="periorbital"
+                  d="M141.9 210 L132.8 177.3 L95.2 169.9 L73.3 181.4 L74 208.4 L84.9 240.5 L111.1 243.8 L132.4 241.5 Z"
+                />
+                <text x="105.7" y="209.1" class="diagram-label">Periorbital</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="periorbital"
+                  d="M178.1 210 L187.2 177.3 L224.8 169.9 L246.7 181.4 L246 208.4 L235.1 240.5 L208.9 243.8 L187.6 241.5 Z"
+                />
+                <text x="214.3" y="209.1" class="diagram-label">Periorbital</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="cheek"
+                  d="M125.2 279.6 L116.5 258.8 L83 244.8 L66.3 255.5 L69.6 307.1 L87.7 337.8 Z"
+                />
+                <text x="91.4" y="280.6" class="diagram-label">Cheek</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="cheek"
+                  d="M194.8 279.6 L203.5 258.8 L237 244.8 L253.7 255.5 L250.4 307.1 L232.3 337.8 Z"
+                />
+                <text x="228.6" y="280.6" class="diagram-label">Cheek</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip"
+                  d="M201.5 318.4 L172.1 306.4 L147.9 305.7 L117.8 318.4 L137.9 333.2 L157.3 338.5 L176.7 333.2 Z"
+                />
+                <text x="158.7" y="322" class="diagram-label">Lip</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="chin"
+                  d="M109.1 372.7 L131.2 386.7 L162.4 397.4 L186.8 388.7 L209.5 373.3 L187.3 355.6 L131.9 353.9 Z"
+                />
+                <text x="159.7" y="375.5" class="diagram-label">Chin</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="neck"
+                  d="M96.7 373.8 L160.6 403.3 L229.2 369.7 L237.6 414.1 L162.7 439.2 L89.7 413.5 Z"
+                />
+                <text x="162.8" y="402.3" class="diagram-label">Neck</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="ear"
+                  d="M36.2 197.3 L29.5 206.6 L34.1 247.5 L47.5 281.6 L60.9 287.6 L64.9 279.6 Z"
+                />
+                <text x="45.5" y="250" class="diagram-label">Ear</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="ear"
+                  d="M283.8 197.3 L290.5 206.6 L285.9 247.5 L272.5 281.6 L259.1 287.6 L255.1 279.6 Z"
+                />
+                <text x="274.5" y="250" class="diagram-label">Ear</text>
+                <!-- FACE_REGIONS_END -->
+              </svg>
+            </div>
+          </div>
+
+          <div id="nose-diagram" class="diagram-wrap diagram-wrap--photo" data-diagram="nose" hidden>
+            <div class="face-photo-stage face-photo-stage--nose">
+              <img
+                class="face-photo"
+                src="/static/face-reference.jpg"
+                alt=""
+                draggable="false"
+              />
+              <svg
+                class="face-overlay"
+                viewBox="0 0 320 360"
+                role="img"
+                aria-label="Nose sub-region diagram"
+              >
+                <!-- NOSE_REGIONS_START -->
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_dorsum"
+                  d="M150 95 L170 95 L172 180 L168 241.6 L150 240.9 L148 180 Z"
+                />
+                <text x="159.7" y="172.1" class="diagram-label">Dorsum</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_sidewall"
+                  d="M131.4 124.9 L150 96.6 L148 250 L120 255 L121.6 200.9 Z"
+                />
+                <text x="134.2" y="185.5" class="diagram-label">Sidewall</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_sidewall"
+                  d="M188.6 124.9 L170 96.6 L172 250 L200 255 L198.4 200.9 Z"
+                />
+                <text x="185.8" y="185.5" class="diagram-label">Sidewall</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_tip"
+                  d="M140 245 L180 245 L177.1 265.2 L161.7 285.3 L144.8 266.3 Z"
+                />
+                <text x="160.7" y="261.4" class="diagram-label">Tip</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_ala"
+                  d="M105 258 L145 255 L148 285 L125 300 L103 285 Z"
+                />
+                <text x="125.2" y="276.6" class="diagram-label">Ala</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_ala"
+                  d="M215 258 L175 255 L172 285 L195 300 L217 285 Z"
+                />
+                <text x="194.8" y="276.6" class="diagram-label">Ala</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="nose_columella"
+                  d="M145.9 286.1 L175.2 287.2 L173.1 305.9 L149.4 306.4 Z"
+                />
+                <text x="160.9" y="296.4" class="diagram-label">Columella</text>
+                <!-- NOSE_REGIONS_END -->
+              </svg>
+            </div>
+          </div>
+
+          <div
+            id="periorbital-diagram"
+            class="diagram-wrap diagram-wrap--photo"
+            data-diagram="periorbital"
+            hidden
+          >
+            <div class="face-photo-stage face-photo-stage--periorbital">
+              <img
+                class="face-photo"
+                src="/static/face-reference.jpg"
+                alt=""
+                draggable="false"
+              />
+              <svg
+                class="face-overlay"
+                viewBox="0 0 320 300"
+                role="img"
+                aria-label="Periorbital sub-region diagram"
+              >
+                <!-- PERIORBITAL_REGIONS_START -->
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_brow"
+                  d="M24.1 123.9 L64.2 116.5 L136.6 136 L129.9 106.5 L60.9 96.4 Z"
+                />
+                <text x="83.1" y="115.9" class="diagram-label">Brow</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_brow"
+                  d="M295.9 123.9 L255.8 116.5 L183.4 136 L190.1 106.5 L259.1 96.4 Z"
+                />
+                <text x="236.9" y="115.9" class="diagram-label">Brow</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_upper_lid"
+                  d="M48.2 160.1 L43.9 139.1 L80.8 128.9 L128.8 142.4 L123.8 164.8 L86.3 142 Z"
+                />
+                <text x="85.3" y="146.2" class="diagram-label">Upper Lid</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_upper_lid"
+                  d="M271.8 160.1 L276.1 139.1 L239.2 128.9 L191.2 142.4 L196.2 164.8 L233.7 142 Z"
+                />
+                <text x="234.7" y="146.2" class="diagram-label">Upper Lid</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_lower_lid"
+                  d="M52.9 161.4 L87.7 170.8 L123.2 166.1 L123.2 178.8 L85.7 188.2 L50.2 177.5 Z"
+                />
+                <text x="87.1" y="173.8" class="diagram-label">Lower Lid</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_lower_lid"
+                  d="M267.1 161.4 L232.3 170.8 L196.8 166.1 L196.8 178.8 L234.3 188.2 L269.8 177.5 Z"
+                />
+                <text x="232.9" y="173.8" class="diagram-label">Lower Lid</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_medial_canthus"
+                  d="M128.5 152 L125.8 172.8 L144.6 172.1 L141.3 148.7 Z"
+                />
+                <text x="135.1" y="161.4" class="diagram-label">Medial Canthus</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_medial_canthus"
+                  d="M191.5 152 L194.2 172.8 L175.4 172.1 L178.7 148.7 Z"
+                />
+                <text x="184.9" y="161.4" class="diagram-label">Medial Canthus</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_lateral_canthus"
+                  d="M44.2 153.4 L44.2 164.1 L22.7 170.1 L20.7 149.4 Z"
+                />
+                <text x="33" y="159.3" class="diagram-label">Lateral Canthus</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_lateral_canthus"
+                  d="M275.8 153.4 L275.8 164.1 L297.3 170.1 L299.3 149.4 Z"
+                />
+                <text x="287" y="159.3" class="diagram-label">Lateral Canthus</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="peri_glabella"
+                  d="M131.2 89.1 L138.1 123.2 L181.4 124.6 L189.5 88.4 Z"
+                />
+                <text x="160" y="106.3" class="diagram-label">Glabella</text>
+                <!-- PERIORBITAL_REGIONS_END -->
+              </svg>
+            </div>
+          </div>
+
+          <div id="lip-diagram" class="diagram-wrap diagram-wrap--photo" data-diagram="lip" hidden>
+            <div class="face-photo-stage face-photo-stage--lip">
+              <img
+                class="face-photo"
+                src="/static/face-reference.jpg"
+                alt=""
+                draggable="false"
+              />
+              <svg
+                class="face-overlay"
+                viewBox="0 0 320 280"
+                role="img"
+                aria-label="Lip sub-region diagram"
+              >
+                <!-- LIP_REGIONS_START -->
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_philtrum"
+                  d="M145 75 L175 75 L172 140 L148 140 Z"
+                />
+                <text x="160" y="107.5" class="diagram-label">Philtrum</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_upper"
+                  d="M99.6 134.1 L213.3 134.4 L229.3 173.5 L95 172 Z"
+                />
+                <text x="159.3" y="153.5" class="diagram-label">Upper</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_lower"
+                  d="M95 172 L225 172 L223.2 232.3 L99.3 229.9 Z"
+                />
+                <text x="160.6" y="201.5" class="diagram-label">Lower</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_vermillion"
+                  d="M81.6 178 L133.8 148.8 L197.3 147.7 L237.3 180.8 L205.6 214.6 L124.6 213.5 Z"
+                />
+                <text x="163.4" y="180.6" class="diagram-label">Vermillion</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_commissure"
+                  d="M68 163 L100 163 L100 187 L68 187 Z"
+                />
+                <text x="84" y="175" class="diagram-label">Commissure</text>
+
+                <path
+                  class="anatomy-region"
+                  data-region-id="lip_commissure"
+                  d="M252 163 L220 163 L220 187 L252 187 Z"
+                />
+                <text x="236" y="175" class="diagram-label">Commissure</text>
+                <!-- LIP_REGIONS_END -->
+              </svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="search-panel" aria-label="Search and filters">
+        <div class="search-row">
+          <label class="sr-only" for="search-input">Search cases</label>
+          <input
+            id="search-input"
+            type="search"
+            placeholder="Search location, flap, graft, surgical pearls…"
+            autocomplete="off"
+          />
+          <button id="search-btn" type="button">Search</button>
+          <button id="clear-btn" type="button" class="secondary-btn">Clear</button>
+        </div>
+
+        <div class="filter-grid">
+          <div class="filter-row filter-row--primary">
+            <label>
+              Location
+              <select id="filter-region">
+                <option value="">All locations</option>
+              </select>
+            </label>
+            <label>
+              Sub-location
+              <select id="filter-sub-location">
+                <option value="">All sub-locations</option>
+              </select>
+            </label>
+            <label>
+              Method of Repair
+              <select id="filter-method">
+                <option value="">All methods</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-row filter-row--secondary">
+            <label id="filter-full-thickness-wrap" hidden>
+              Full Thickness
+              <select id="filter-full-thickness">
+                <option value="">Any</option>
+              </select>
+            </label>
+            <label id="filter-general-flap-wrap" hidden>
+              Flap category
+              <select id="filter-general-flap">
+                <option value="">All flap categories</option>
+              </select>
+            </label>
+            <label id="filter-specific-flap-wrap" hidden>
+              Specific Flap Description
+              <select id="filter-specific-flap">
+                <option value="">All specific flaps</option>
+              </select>
+            </label>
+            <label id="filter-graft-wrap" hidden>
+              Graft
+              <select id="filter-graft">
+                <option value="">All grafts</option>
+              </select>
+            </label>
+            <label id="filter-graft-donor-wrap" hidden>
+              Graft Donor Site
+              <select id="filter-graft-donor">
+                <option value="">All donor sites</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <p id="status-message" class="status-message" role="status" aria-live="polite">
+          Click a region on the face diagram or use filters to find matching cases.
+        </p>
+      </section>
+      </div>
+
+      <section class="results-section" aria-label="Matching cases">
+        <div class="results-header">
+          <h2>Matching Cases</h2>
+          <div class="results-header-controls">
+            <p id="results-count" class="results-count">0 cases</p>
+            <label class="sort-control" id="sort-wrap" hidden>
+              <span>Sort</span>
+              <select id="sort-select">
+                <option value="default">Default</option>
+                <option value="location">Location (A–Z)</option>
+                <option value="comments">Most discussed</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div id="results-grid" class="results-grid"></div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>Prototype environment — images served from local mock network drive.</p>
+    </footer>
+
+    <script src="/script.js"></script>
+  </body>
+</html>
