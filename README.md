@@ -51,7 +51,7 @@ one layer rather than a re-architecture.
 | `import_patient_log.py` | Reads the Excel case log into structured seed records |
 | `validate_spreadsheet.py` | Read-only pre-flight check on a candidate case log |
 | `field_options.py` | Filter dropdown vocabularies |
-| `generate_placeholders.py` | Generates stand-in case images for local development |
+| `generate_placeholders.py` | Generates stand-in case images and the face reference illustration |
 | `build.py` | Deployment build step (images + database) |
 | `region-editor.html` | Visual editor for authoring the anatomy diagram polygons |
 | `index.html` / `script.js` / `styles.css` | Single-page frontend |
@@ -129,10 +129,11 @@ Region polygons are stored as SVG paths inside `index.html`, between marker comm
 drawing and repositioning them; it reads the current shapes, lets you edit them on the
 reference image, and writes the updated markup back.
 
-`static/face-reference.jpg` in this repository is a **generated placeholder
-illustration**, not a photograph, sized to match the coordinate space the polygons were
-authored against. Swap in your own reference image and re-run the region editor to
-realign.
+`static/face-reference.jpg` is a **generated line-art illustration**, not a photograph.
+`generate_placeholders.py` draws it fresh on every run — like the real case log, no
+actual reference photo is ever committed here (see `.gitignore`). Its layout is sized to
+match the coordinate space the polygons were authored against. Swap in your own
+reference image and re-run the region editor to realign.
 
 ## Security
 

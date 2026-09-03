@@ -236,6 +236,73 @@ def create_stage_image(patient: dict, filename: str, stage: str, output_path: Pa
     image.save(output_path, format="JPEG", quality=90)
 
 
+FACE_REF_SIZE = (600, 900)
+FACE_REF_SUPERSAMPLE = 3
+# Anchors below are derived from the SVG region polygons in index.html and the
+# CSS crop/zoom rules in styles.css (.face-photo-stage*), so this illustration
+# lines up with the clickable regions on the face, nose, periorbital, and lip
+# diagrams. If those polygons or crops change, regenerate against the new math
+# rather than eyeballing it — see the region-editor.html workflow in README.md.
+
+
+def create_face_reference(output_path: Path) -> None:
+    """Draw a generic line-art face used as the backdrop for the anatomy
+    diagrams. This stands in for a real reference photo, which is never
+    committed — see the note in .gitignore."""
+    scale = FACE_REF_SUPERSAMPLE
+    width, height = FACE_REF_SIZE[0] * scale, FACE_REF_SIZE[1] * scale
+    ink = "#232d4b"
+    stroke = 5 * scale
+
+    def pt(x: float, y: float) -> tuple[float, float]:
+        return (x * scale, y * scale)
+
+    def box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float, float]:
+        return (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+
+    image = Image.new("RGB", (width, height), "#f3f5fa")
+    draw = ImageDraw.Draw(image)
+
+    head_box = box(120, 90, 480, 750)
+    draw.ellipse(head_box, outline=ink, width=stroke)
+
+    for side in (-1, 1):
+        ear_cx = 300 + side * 215
+        draw.ellipse(box(ear_cx - 26, 413, ear_cx + 26, 537), outline=ink, width=stroke)
+
+    # Eyebrows: a shallow two-segment arch, mirrored left/right.
+    for side in (-1, 1):
+        near_x, far_x = 300 + side * 42, 300 + side * 150
+        draw.line(
+            [pt(near_x, 340), pt(300 + side * 96, 332), pt(far_x, 341)],
+            fill=ink,
+            width=stroke,
+            joint="curve",
+        )
+
+    # Eyes: almond outline with a pupil.
+    for side in (-1, 1):
+        eye_cx = 300 + side * 95
+        draw.ellipse(box(eye_cx - 52, 380, eye_cx + 52, 414), outline=ink, width=stroke)
+        draw.ellipse(box(eye_cx - 9, 388, eye_cx + 9, 406), fill=ink)
+
+    # Nose: an open wedge from the bridge to the nostril wings.
+    draw.line([pt(300, 338), pt(270, 514)], fill=ink, width=stroke)
+    draw.line([pt(300, 338), pt(330, 514)], fill=ink, width=stroke)
+    draw.line([pt(270, 514), pt(300, 522), pt(330, 514)], fill=ink, width=stroke, joint="curve")
+
+    # Mouth: a single smile-shaped arc.
+    draw.arc(box(232, 601, 368, 623), start=20, end=160, fill=ink, width=stroke)
+
+    # Neck, running off the bottom edge toward the shoulders.
+    draw.line([pt(240, 700), pt(150, 900)], fill=ink, width=stroke)
+    draw.line([pt(360, 700), pt(450, 900)], fill=ink, width=stroke)
+
+    image = image.resize(FACE_REF_SIZE, Image.LANCZOS)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path, format="JPEG", quality=92)
+
+
 def main() -> None:
     if MOCK_O_DRIVE_PATH.exists():
         shutil.rmtree(MOCK_O_DRIVE_PATH)
@@ -247,6 +314,10 @@ def main() -> None:
         for filename, stage, _ in patient["images"]:
             create_stage_image(patient, filename, stage, folder / filename)
             print(f"Wrote {patient['folder_name']}/{filename}")
+
+    face_ref_path = Path(__file__).resolve().parent / "static" / "face-reference.jpg"
+    create_face_reference(face_ref_path)
+    print(f"Wrote {face_ref_path.relative_to(Path.cwd())}")
 
 
 if __name__ == "__main__":
