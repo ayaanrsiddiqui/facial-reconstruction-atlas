@@ -1,5 +1,10 @@
 # Facial Reconstruction Atlas
 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+![FastAPI](https://img.shields.io/badge/backend-FastAPI-009485.svg)
+![Deployed on Vercel](https://img.shields.io/badge/deployed-Vercel-000000.svg)
+
 A searchable, filterable reference application for facial plastic surgery reconstructive
 cases. Clinicians browse a case series by anatomic defect location, repair method, and
 flap or graft characteristics, with each case linking to a staged photographic series
@@ -7,14 +12,36 @@ documenting the reconstruction from pre-operative through healed.
 
 Built as a research tool for the UVA Health Department of Otolaryngology.
 
+**[Live demo →](https://facial-reconstruction-atlas.vercel.app)** (seeded with the 12
+fabricated cases described below — nothing real)
+
 > **This is a public, code-only copy.**
 > No real case data, patient imagery, or institutional configuration is included here.
 > The repository ships with a small set of **fabricated** sample cases so the
 > application runs end to end out of the box. See [Sample data](#sample-data).
 
----
+## Screenshots
 
-## What it does
+| Anatomy explorer | Case detail |
+| --- | --- |
+| ![Clickable face diagram with filters and search](docs/screenshots/search-view.png) | ![Case detail modal with staged photo carousel and comments](docs/screenshots/case-detail.png) |
+
+## Contents
+
+- [Features](#features)
+- [Tech stack](#tech-stack)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Getting started](#getting-started)
+- [Deployment](#deployment)
+- [Sample data](#sample-data)
+- [How the case log is parsed](#how-the-case-log-is-parsed)
+- [Anatomy diagrams and the region editor](#anatomy-diagrams-and-the-region-editor)
+- [API reference](#api-reference)
+- [Security](#security)
+- [License](#license)
+
+## Features
 
 - **Multi-criteria filtering** across defect region, sub-location, defect size,
   full-thickness status, repair method, flap type, graft type, and donor site.
@@ -26,6 +53,21 @@ Built as a research tool for the UVA Health Department of Otolaryngology.
 - **Accounts, favorites, and comments** so reviewers can bookmark cases and leave
   clinical notes.
 - **Spreadsheet validation tool** that pre-checks a case log before import.
+
+## Tech stack
+
+| Layer | Choice | Notes |
+| --- | --- | --- |
+| Backend | [FastAPI](https://fastapi.tiangolo.com/) on Python 3.12+ | Single `app.py`, no ORM |
+| Database | SQLite | Rebuilt from the spreadsheet at build time, opened read-only at runtime on Vercel |
+| Frontend | Vanilla HTML/CSS/JS | One `index.html` + `script.js`, no framework, no build step |
+| Spreadsheet parsing | [openpyxl](https://openpyxl.readthedocs.io/) | `import_patient_log.py` |
+| Placeholder imagery | [Pillow](https://python-pillow.org/) | Draws case thumbnails and the face-reference illustration |
+| Auth | PBKDF2-HMAC-SHA256 + cookie sessions | No third-party auth dependency |
+| Hosting | [Vercel](https://vercel.com/) (Python serverless runtime) | Auto-deploys on push via the GitHub integration |
+
+There's no test suite yet — `validate_spreadsheet.py` is the closest thing, acting as a
+data-quality gate for anything going into the database.
 
 ## Architecture
 
@@ -43,7 +85,23 @@ path against a fixed root and an extension allowlist before streaming bytes. Tha
 single chokepoint is what makes per-user authorization and access logging attachable as
 one layer rather than a re-architecture.
 
-### Files
+**Build-time vs. runtime** is the other load-bearing split. Vercel's Python runtime is
+read-only once deployed, so the SQLite database can't be written to on every cold start.
+Instead:
+
+```
+patient_log.xlsx ──▶ import_patient_log.py ──▶ build.py ──▶ metadata.db, mock_o_drive/
+   (build time only, via generate_placeholders.py + init_database())
+```
+
+`build.py` runs once per deploy (see [Deployment](#deployment)), sets
+`ENTDATABASE_ALLOW_DB_WRITES=1` for that process only, generates the placeholder
+imagery, and seeds `metadata.db`. At request time, `database_writes_allowed()`
+(`app.py`) checks the Vercel-provided `VERCEL` environment variable and opens SQLite in
+immutable, read-only mode unless that build-time flag is set — so a stray write attempt
+in production fails loudly instead of silently targeting a throwaway filesystem.
+
+## Project structure
 
 | File | Role |
 | --- | --- |
@@ -74,6 +132,31 @@ uvicorn app:app --reload --host 127.0.0.1 --port 8001
 ```
 
 Open <http://127.0.0.1:8001>.
+
+## Deployment
+
+The [live demo](https://facial-reconstruction-atlas.vercel.app) runs on Vercel's Python
+serverless runtime, configured entirely by two files:
+
+- **`vercel.json`** registers `app.py` as the function Vercel builds and routes all
+  traffic to.
+- **`pyproject.toml`**'s `[tool.vercel.scripts]` block points Vercel's build step at
+  `build.py`, which stages the fabricated sample spreadsheet (mirroring the `cp
+  sample_data/patient_log.xlsx .` step above), runs `generate_placeholders.py`, and
+  seeds `metadata.db` — all before the function ever serves a request.
+
+To deploy your own copy: import this repository into Vercel (or run `vercel --prod`
+from a clone) — no environment variables are required for the demo data to work. Once
+connected, `git push` to the default branch triggers a rebuild and redeploy
+automatically.
+
+Relevant environment variables, all optional:
+
+| Variable | Set by | Purpose |
+| --- | --- | --- |
+| `VERCEL` | Vercel itself | Detected by `app.py` to switch SQLite to read-only mode at runtime |
+| `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | Opts the build process back into writes despite `VERCEL` being set |
+| `ENTDATABASE_XLSX_PATH` | You | Points the importer at a specific spreadsheet instead of the auto-detected default |
 
 ## Sample data
 
@@ -122,18 +205,42 @@ Only a missing required column is a hard failure.
 New vocabulary — an unfamiliar flap, graft, or sub-location — imports fine but will not
 appear in the filter dropdowns until added to `field_options.py`.
 
-## The anatomy diagram
+## Anatomy diagrams and the region editor
 
 Region polygons are stored as SVG paths inside `index.html`, between marker comments
-(`<!-- FACE_REGIONS_START -->` and friends). `region-editor.html` is a visual tool for
-drawing and repositioning them; it reads the current shapes, lets you edit them on the
-reference image, and writes the updated markup back.
+(`<!-- FACE_REGIONS_START -->` and friends) — one block per diagram (the full face, plus
+nose/periorbital/lip drill-downs). `app.py` exposes those blocks as structured shapes at
+`GET /api/dev/face-regions` and can rewrite them from `POST /api/dev/face-regions`; both
+are what `region-editor.html` (served at `/region-editor`) uses under the hood, so
+editing polygons visually is really just editing `index.html` through an API instead of
+by hand. Like every other write path, saving is disabled wherever
+`ENTDATABASE_ALLOW_DB_WRITES`/`VERCEL` says writes aren't allowed — it's a local
+authoring tool, not a production feature.
 
 `static/face-reference.jpg` is a **generated line-art illustration**, not a photograph.
 `generate_placeholders.py` draws it fresh on every run — like the real case log, no
 actual reference photo is ever committed here (see `.gitignore`). Its layout is sized to
 match the coordinate space the polygons were authored against. Swap in your own
 reference image and re-run the region editor to realign.
+
+## API reference
+
+Every route lives in `app.py`; interactive, always-current documentation (request/response
+schemas included) is auto-generated by FastAPI at
+[`/docs`](https://facial-reconstruction-atlas.vercel.app/docs) on any running instance.
+The short version:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/anatomy` | Diagram and region definitions for the face/nose/periorbital/lip selectors |
+| `GET /api/filters` | Dropdown vocabulary, plus which values actually appear in the current database |
+| `GET /api/search` | Filtered/full-text case search |
+| `GET /api/cases/{folder_name}` | Full case detail, including images |
+| `GET /api/image/{folder_name}/{filename}` | Path-validated case photo proxy |
+| `POST /api/auth/register` / `login` / `logout`, `GET /api/auth/me` | Cookie-session accounts |
+| `POST /api/cases/{folder_name}/favorite`, `GET /api/favorites` | Per-user favorites (auth required) |
+| `GET/POST /api/cases/{folder_name}/comments`, `DELETE /api/comments/{id}` | Case comments (auth required to write, own-comment-only delete) |
+| `GET/POST /api/dev/face-regions` | Read/rewrite the SVG region markup — backs the region editor, local dev only |
 
 ## Security
 
