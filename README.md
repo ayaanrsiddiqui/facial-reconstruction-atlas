@@ -98,8 +98,19 @@ patient_log.xlsx ──▶ import_patient_log.py ──▶ build.py ──▶ me
 `ENTDATABASE_ALLOW_DB_WRITES=1` for that process only, generates the placeholder
 imagery, and seeds `metadata.db`. At request time, `database_writes_allowed()`
 (`app.py`) checks the Vercel-provided `VERCEL` environment variable and opens SQLite in
-immutable, read-only mode unless that build-time flag is set — so a stray write attempt
-in production fails loudly instead of silently targeting a throwaway filesystem.
+immutable, read-only mode unless writes are explicitly re-enabled — so a stray write
+attempt against the read-only deployment bundle fails loudly instead of silently
+targeting a throwaway filesystem.
+
+That still leaves one case: a deployment that *does* re-enable writes but points
+`ENTDATABASE_DB_PATH` somewhere that turns out not to be writable after all (a
+misconfigured volume, a permissions mismatch). `init_database()` treats that as
+recoverable rather than fatal — on a fresh path it first tries to copy the
+build-produced `metadata.db` into place (`_bootstrap_db_if_needed()`, avoiding a full
+spreadsheet re-import on every cold start), and if the write attempt fails with a
+read-only or permissions error either way, it logs a warning, flips the app into
+read-only mode for the rest of that process, and continues serving reads instead of
+taking the whole app down. Startup failing shouldn't mean the login page 500s.
 
 ## Project structure
 
@@ -159,8 +170,27 @@ Relevant environment variables, all optional:
 | `ENTDATABASE_ALLOWED_ORIGINS` | You | `http://127.0.0.1:8001,http://localhost:8001` | Comma-separated CORS origin allowlist. Credentials are allowed, so this must stay an explicit list — never `*` |
 | `ENTDATABASE_DEV_TOOLS` | You | unset | Set to `1` to expose the region editor (`/region-editor`, `/api/dev/face-regions`). Unset, those routes return 404; set, they still require a logged-in user |
 | `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | unset | Opts the build process back into writes despite `VERCEL` being set |
+| `ENTDATABASE_DEMO_MODE` | You | unset | Public demo only — see below. Never set on an internal deployment |
 | `ENTDATABASE_XLSX_PATH` | You | auto-detected | Points the importer at a specific spreadsheet instead of the auto-detected default |
 | `VERCEL` | Vercel itself | — | Detected by `app.py` to switch SQLite to read-only mode at runtime |
+
+The [live demo](https://facial-reconstruction-atlas.vercel.app) runs this specific set,
+which is what turns the login-walled internal tool into something anyone can click
+around without an account:
+
+```
+ENTDATABASE_DEMO_MODE=1
+ENTDATABASE_ALLOW_DB_WRITES=1
+ENTDATABASE_DB_PATH=/tmp/metadata.db
+```
+
+`ENTDATABASE_DEMO_MODE` drops the login requirement on read endpoints and lets
+anonymous visitors favorite cases under a shared demo account, while still requiring a
+real (if throwaway) account to post a comment — see `require_user`/`demo_mode_enabled`
+in `app.py`. `/tmp` on a serverless instance is per-instance and ephemeral, so demo
+favorites and comments reset whenever the instance recycles; that's intended for a
+public demo, not a bug. An internal deployment should leave `ENTDATABASE_DEMO_MODE`
+unset entirely — every data endpoint then requires a real login.
 
 ## Sample data
 

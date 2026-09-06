@@ -8,7 +8,9 @@ import html
 import os
 import re
 import secrets
+import shutil
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +25,17 @@ from import_patient_log import SEED_PATIENTS, format_locations_display
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("ENTDATABASE_DB_PATH", BASE_DIR / "metadata.db"))
 IMAGE_ROOT = Path(os.getenv("ENTDATABASE_IMAGE_ROOT", BASE_DIR / "mock_o_drive")).resolve()
+BUNDLED_DB = BASE_DIR / "metadata.db"
+
+# Flipped at runtime if DB_PATH turns out not to be writable despite
+# database_writes_allowed() saying it should be — see init_database().
+_writes_disabled_at_runtime = False
+
+
 def database_writes_allowed() -> bool:
     """Vercel runtime is read-only; build.py opts in with ENTDATABASE_ALLOW_DB_WRITES=1."""
+    if _writes_disabled_at_runtime:
+        return False
     if os.getenv("ENTDATABASE_ALLOW_DB_WRITES") == "1":
         return True
     return os.getenv("VERCEL") != "1"
@@ -267,25 +278,53 @@ def recreate_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _bootstrap_db_if_needed() -> None:
+    """Seed a writable database location from the read-only bundled copy.
+
+    On a serverless host the deployment bundle is read-only, so DB_PATH is pointed at
+    somewhere writable (for example /tmp). The first request on a cold instance finds
+    nothing there; rather than re-running the spreadsheet import, copy the database
+    the build step already produced.
+    """
+    if DB_PATH == BUNDLED_DB or DB_PATH.exists():
+        return
+    if BUNDLED_DB.is_file():
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(BUNDLED_DB, DB_PATH)
+
+
 def init_database() -> None:
+    global _writes_disabled_at_runtime
     if not database_writes_allowed():
         return
 
-    IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        _bootstrap_db_if_needed()
+        IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
-    with _open_db() as conn:
-        expected_count = len(SEED_PATIENTS)
-        patient_count = (
-            conn.execute("SELECT COUNT(*) FROM patients").fetchone()[0]
-            if schema_is_current(conn)
-            else 0
+        with _open_db() as conn:
+            expected_count = len(SEED_PATIENTS)
+            patient_count = (
+                conn.execute("SELECT COUNT(*) FROM patients").fetchone()[0]
+                if schema_is_current(conn)
+                else 0
+            )
+
+            if not schema_is_current(conn) or patient_count != expected_count:
+                recreate_schema(conn)
+                seed_database(conn)
+
+            conn.commit()
+    except (sqlite3.OperationalError, OSError) as exc:
+        if isinstance(exc, sqlite3.OperationalError) and "readonly" not in str(exc).lower():
+            raise
+        _writes_disabled_at_runtime = True
+        print(
+            f"[entdatabase] {DB_PATH} is not writable — continuing in read-only mode. "
+            "Set ENTDATABASE_DB_PATH to a writable location (for example /tmp/metadata.db) "
+            "if this deployment needs to write.",
+            file=sys.stderr,
         )
-
-        if not schema_is_current(conn) or patient_count != expected_count:
-            recreate_schema(conn)
-            seed_database(conn)
-
-        conn.commit()
 
 
 def seed_database(conn: sqlite3.Connection) -> None:
