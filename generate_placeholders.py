@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app import MOCK_O_DRIVE_PATH
+from app import IMAGE_ROOT
 from import_patient_log import SEED_PATIENTS, format_locations_display, primary_location
 
 WIDTH, HEIGHT = 640, 480
@@ -304,12 +304,12 @@ def create_face_reference(output_path: Path) -> None:
 
 
 def main() -> None:
-    if MOCK_O_DRIVE_PATH.exists():
-        shutil.rmtree(MOCK_O_DRIVE_PATH)
-    MOCK_O_DRIVE_PATH.mkdir(parents=True, exist_ok=True)
+    if IMAGE_ROOT.exists():
+        shutil.rmtree(IMAGE_ROOT)
+    IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
     for patient in SEED_PATIENTS:
-        folder = MOCK_O_DRIVE_PATH / patient["folder_name"]
+        folder = IMAGE_ROOT / patient["folder_name"]
         folder.mkdir(parents=True, exist_ok=True)
         for filename, stage, _ in patient["images"]:
             create_stage_image(patient, filename, stage, folder / filename)

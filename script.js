@@ -169,7 +169,9 @@ function updateSubLocationOptions() {
 async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Request failed: ${url}`);
+    const error = new Error(`Request failed: ${url}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -382,14 +384,26 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+let demoMode = false;
+
 async function refreshAuthState() {
   try {
     const data = await fetchJson("/api/auth/me");
-    currentUser = data.username;
+    currentUser = data.username || null;
+    demoMode = Boolean(data.demo);
   } catch (error) {
     currentUser = null;
   }
+  renderDemoBanner();
   renderAuthArea();
+}
+
+function renderDemoBanner() {
+  const banner = document.getElementById("demo-banner");
+  if (banner) banner.hidden = !demoMode;
+  // "Internal Use Only" is true of the internal deployment, not of the public demo.
+  const badge = document.getElementById("internal-badge");
+  if (badge) badge.hidden = demoMode;
 }
 
 function renderAuthArea() {
@@ -413,6 +427,19 @@ function renderAuthArea() {
     logoutBtn.addEventListener("click", handleLogout);
 
     authArea.append(label, favoritesLink, logoutBtn);
+  } else if (demoMode) {
+    // Demo: browsing and favorites are open; signing in is optional and unlocks comments.
+    const note = document.createElement("span");
+    note.className = "auth-username";
+    note.textContent = "Demo — sample data";
+
+    const demoRegisterBtn = document.createElement("button");
+    demoRegisterBtn.type = "button";
+    demoRegisterBtn.className = "secondary-btn auth-btn";
+    demoRegisterBtn.textContent = "Create demo account";
+    demoRegisterBtn.addEventListener("click", () => openAuthModal("register"));
+
+    authArea.append(note, demoRegisterBtn);
   } else {
     const loginBtn = document.createElement("button");
     loginBtn.type = "button";
@@ -469,6 +496,7 @@ async function handleAuthSubmit(event) {
     currentUser = data.username;
     renderAuthArea();
     closeAuthModal();
+    await loadConfig();
     runSearch();
   } catch (error) {
     authError.textContent = error.message;
@@ -1001,7 +1029,7 @@ function clearFilters() {
   setStatus("Filters cleared. Click a region on the diagram or search to view cases.");
 }
 
-async function initializeApp() {
+async function loadConfig() {
   try {
     const [filters, anatomy] = await Promise.all([
       fetchJson("/api/filters"),
@@ -1031,10 +1059,18 @@ async function initializeApp() {
     syncExplorerToFilters();
   } catch (error) {
     console.error(error);
-    setStatus("Unable to load filters. Ensure the backend server is running.", true);
+    if (error.status === 401) {
+      setStatus("Sign in to browse cases.", true);
+    } else {
+      setStatus("Unable to load filters. Ensure the backend server is running.", true);
+    }
   }
+}
 
-  refreshAuthState();
+
+async function initializeApp() {
+  await refreshAuthState();
+  await loadConfig();
 }
 
 searchBtn.addEventListener("click", () => runSearch());

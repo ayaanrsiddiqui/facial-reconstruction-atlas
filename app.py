@@ -12,7 +12,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -21,8 +21,8 @@ from field_options import FILTER_OPTIONS, PATIENT_COLUMNS
 from import_patient_log import SEED_PATIENTS, format_locations_display
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "metadata.db"
-MOCK_O_DRIVE_PATH = BASE_DIR / "mock_o_drive"
+DB_PATH = Path(os.getenv("ENTDATABASE_DB_PATH", BASE_DIR / "metadata.db"))
+IMAGE_ROOT = Path(os.getenv("ENTDATABASE_IMAGE_ROOT", BASE_DIR / "mock_o_drive")).resolve()
 def database_writes_allowed() -> bool:
     """Vercel runtime is read-only; build.py opts in with ENTDATABASE_ALLOW_DB_WRITES=1."""
     if os.getenv("ENTDATABASE_ALLOW_DB_WRITES") == "1":
@@ -271,7 +271,7 @@ def init_database() -> None:
     if not database_writes_allowed():
         return
 
-    MOCK_O_DRIVE_PATH.mkdir(parents=True, exist_ok=True)
+    IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
     with _open_db() as conn:
         expected_count = len(SEED_PATIENTS)
@@ -434,11 +434,41 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
     return row
 
 
-def require_user(request: Request) -> sqlite3.Row:
+def demo_mode_enabled() -> bool:
+    """Public demonstration instance: browsing without an account.
+
+    Set only on the public demo deployment, which runs on fabricated sample data
+    and a read-only database. Never set on an internal deployment — it disables
+    the login requirement on every read endpoint.
+    """
+    return os.getenv("ENTDATABASE_DEMO_MODE") == "1"
+
+
+DEMO_USER: dict[str, Any] = {"id": 0, "username": "demo"}
+
+
+def require_user(request: Request) -> sqlite3.Row | dict[str, Any]:
+    # A real session always wins. The demo user is only a fallback for anonymous
+    # visitors on the public demo — otherwise a signed-in user's favorites and
+    # comments would be written against the shared demo account.
     user = get_current_user(request)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Login required.")
-    return user
+    if user is not None:
+        return user
+    if demo_mode_enabled():
+        return DEMO_USER
+    raise HTTPException(status_code=401, detail="Login required.")
+
+
+def dev_tools_enabled() -> bool:
+    """Development-only routes are opt-in via ENTDATABASE_DEV_TOOLS=1."""
+    return os.getenv("ENTDATABASE_DEV_TOOLS") == "1"
+
+
+def require_dev_tools(request: Request) -> sqlite3.Row:
+    """Hide dev routes entirely unless enabled, and require a login when they are."""
+    if not dev_tools_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return require_user(request)
 
 
 def get_patient_row_id(conn: sqlite3.Connection, folder_name: str) -> int:
@@ -600,10 +630,9 @@ def resolve_safe_image_path(folder_name: str, filename: str) -> Path:
     if suffix not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported file type.")
 
-    candidate = (MOCK_O_DRIVE_PATH / folder_name / filename).resolve()
-    drive_root = MOCK_O_DRIVE_PATH.resolve()
+    candidate = (IMAGE_ROOT / folder_name / filename).resolve()
 
-    if drive_root not in candidate.parents:
+    if IMAGE_ROOT not in candidate.parents:
         raise HTTPException(status_code=400, detail="Invalid image path.")
 
     if not candidate.is_file():
@@ -823,12 +852,19 @@ def patient_to_case_card(
 
 app = FastAPI(title="Facial Reconstruction Atlas", version="0.4.0")
 
+DEFAULT_ALLOWED_ORIGINS = "http://127.0.0.1:8001,http://localhost:8001"
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ENTDATABASE_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -842,12 +878,12 @@ def on_startup() -> None:
 
 
 @app.get("/api/anatomy")
-def get_anatomy() -> dict[str, Any]:
+def get_anatomy(_user: sqlite3.Row = Depends(require_user)) -> dict[str, Any]:
     return ANATOMY_DIAGRAMS
 
 
 @app.get("/api/filters")
-def get_filters() -> dict[str, Any]:
+def get_filters(_user: sqlite3.Row = Depends(require_user)) -> dict[str, Any]:
     with get_db_connection() as conn:
         def distinct_locations(column: str) -> list[str]:
             rows = conn.execute(
@@ -886,6 +922,7 @@ def search_cases(
     specific_flap_description: str | None = Query(None),
     graft: str | None = Query(None),
     graft_donor_site: str | None = Query(None),
+    _user: sqlite3.Row = Depends(require_user),
 ) -> dict[str, Any]:
     where_clause, params = build_search_query(
         q,
@@ -998,12 +1035,18 @@ def logout(request: Request, response: Response) -> dict[str, Any]:
 def get_me(request: Request) -> dict[str, Any]:
     user = get_current_user(request)
     if user is None:
+        if demo_mode_enabled():
+            return {"username": None, "demo": True}
         raise HTTPException(status_code=401, detail="Not logged in.")
-    return {"username": user["username"]}
+    return {"username": user["username"], "demo": False}
 
 
 @app.get("/api/cases/{folder_name}")
-def get_case_detail(folder_name: str, request: Request) -> dict[str, Any]:
+def get_case_detail(
+    folder_name: str,
+    request: Request,
+    _user: sqlite3.Row = Depends(require_user),
+) -> dict[str, Any]:
     with get_db_connection() as conn:
         patients = fetch_patients(conn, "WHERE folder_name = ?", (folder_name,))
         if not patients:
@@ -1084,7 +1127,9 @@ def list_favorites(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/cases/{folder_name}/comments")
-def list_comments(folder_name: str) -> dict[str, Any]:
+def list_comments(
+    folder_name: str, _user: sqlite3.Row = Depends(require_user)
+) -> dict[str, Any]:
     with get_db_connection() as conn:
         if not table_exists(conn, "comments"):
             return {"count": 0, "comments": []}
@@ -1115,6 +1160,13 @@ def list_comments(folder_name: str) -> dict[str, Any]:
 @app.post("/api/cases/{folder_name}/comments")
 def add_comment(folder_name: str, payload: CommentRequest, request: Request) -> dict[str, Any]:
     require_writes()
+    # Favorites are open to anonymous visitors on the public demo, but comments are
+    # free text on a publicly reachable page — those need a real account.
+    if demo_mode_enabled() and get_current_user(request) is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in to leave a comment. Accounts on this demo are temporary.",
+        )
     user = require_user(request)
 
     body = payload.body.strip()
@@ -1164,7 +1216,9 @@ def delete_comment(comment_id: int, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/image/{folder_name}/{filename}")
-def get_image(folder_name: str, filename: str) -> FileResponse:
+def get_image(
+    folder_name: str, filename: str, _user: sqlite3.Row = Depends(require_user)
+) -> FileResponse:
     return FileResponse(resolve_safe_image_path(folder_name, filename))
 
 
@@ -1174,17 +1228,21 @@ def serve_index() -> FileResponse:
 
 
 @app.get("/region-editor")
-def serve_region_editor() -> FileResponse:
+def serve_region_editor(_user: sqlite3.Row = Depends(require_dev_tools)) -> FileResponse:
     return FileResponse(BASE_DIR / "region-editor.html")
 
 
 @app.get("/api/dev/face-regions")
-def get_face_regions() -> dict[str, list[dict[str, Any]]]:
+def get_face_regions(
+    _user: sqlite3.Row = Depends(require_dev_tools),
+) -> dict[str, list[dict[str, Any]]]:
     return read_current_face_regions()
 
 
 @app.post("/api/dev/face-regions")
-def save_face_regions(payload: FaceRegionsPayload) -> dict[str, Any]:
+def save_face_regions(
+    payload: FaceRegionsPayload, _user: sqlite3.Row = Depends(require_dev_tools)
+) -> dict[str, Any]:
     require_writes()
 
     markers = DIAGRAM_MARKERS.get(payload.diagram)

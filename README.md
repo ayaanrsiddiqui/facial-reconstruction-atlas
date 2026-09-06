@@ -152,11 +152,15 @@ automatically.
 
 Relevant environment variables, all optional:
 
-| Variable | Set by | Purpose |
-| --- | --- | --- |
-| `VERCEL` | Vercel itself | Detected by `app.py` to switch SQLite to read-only mode at runtime |
-| `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | Opts the build process back into writes despite `VERCEL` being set |
-| `ENTDATABASE_XLSX_PATH` | You | Points the importer at a specific spreadsheet instead of the auto-detected default |
+| Variable | Set by | Default | Purpose |
+| --- | --- | --- | --- |
+| `ENTDATABASE_DB_PATH` | You | `metadata.db` beside `app.py` | Absolute or relative path to the SQLite database file |
+| `ENTDATABASE_IMAGE_ROOT` | You | `mock_o_drive/` beside `app.py` | Directory the case images are served from. Resolved to an absolute path once at import; `/api/image/...` refuses to serve anything outside it |
+| `ENTDATABASE_ALLOWED_ORIGINS` | You | `http://127.0.0.1:8001,http://localhost:8001` | Comma-separated CORS origin allowlist. Credentials are allowed, so this must stay an explicit list — never `*` |
+| `ENTDATABASE_DEV_TOOLS` | You | unset | Set to `1` to expose the region editor (`/region-editor`, `/api/dev/face-regions`). Unset, those routes return 404; set, they still require a logged-in user |
+| `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | unset | Opts the build process back into writes despite `VERCEL` being set |
+| `ENTDATABASE_XLSX_PATH` | You | auto-detected | Points the importer at a specific spreadsheet instead of the auto-detected default |
+| `VERCEL` | Vercel itself | — | Detected by `app.py` to switch SQLite to read-only mode at runtime |
 
 ## Sample data
 
@@ -213,9 +217,10 @@ nose/periorbital/lip drill-downs). `app.py` exposes those blocks as structured s
 `GET /api/dev/face-regions` and can rewrite them from `POST /api/dev/face-regions`; both
 are what `region-editor.html` (served at `/region-editor`) uses under the hood, so
 editing polygons visually is really just editing `index.html` through an API instead of
-by hand. Like every other write path, saving is disabled wherever
-`ENTDATABASE_ALLOW_DB_WRITES`/`VERCEL` says writes aren't allowed — it's a local
-authoring tool, not a production feature.
+by hand. Because it is a local authoring tool rather than a production feature, all three routes
+are hidden unless `ENTDATABASE_DEV_TOOLS=1`, returning 404 otherwise; with the flag set
+they still require a logged-in user. Saving is additionally disabled wherever
+`ENTDATABASE_ALLOW_DB_WRITES`/`VERCEL` says writes aren't allowed.
 
 `static/face-reference.jpg` is a **generated line-art illustration**, not a photograph.
 `generate_placeholders.py` draws it fresh on every run — like the real case log, no
@@ -232,15 +237,15 @@ The short version:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/anatomy` | Diagram and region definitions for the face/nose/periorbital/lip selectors |
-| `GET /api/filters` | Dropdown vocabulary, plus which values actually appear in the current database |
-| `GET /api/search` | Filtered/full-text case search |
-| `GET /api/cases/{folder_name}` | Full case detail, including images |
-| `GET /api/image/{folder_name}/{filename}` | Path-validated case photo proxy |
+| `GET /api/anatomy` | Diagram and region definitions for the face/nose/periorbital/lip selectors (auth required) |
+| `GET /api/filters` | Dropdown vocabulary, plus which values actually appear in the current database (auth required) |
+| `GET /api/search` | Filtered/full-text case search (auth required) |
+| `GET /api/cases/{folder_name}` | Full case detail, including images (auth required) |
+| `GET /api/image/{folder_name}/{filename}` | Path-validated case photo proxy (auth required) |
 | `POST /api/auth/register` / `login` / `logout`, `GET /api/auth/me` | Cookie-session accounts |
 | `POST /api/cases/{folder_name}/favorite`, `GET /api/favorites` | Per-user favorites (auth required) |
 | `GET/POST /api/cases/{folder_name}/comments`, `DELETE /api/comments/{id}` | Case comments (auth required to write, own-comment-only delete) |
-| `GET/POST /api/dev/face-regions` | Read/rewrite the SVG region markup — backs the region editor, local dev only |
+| `GET/POST /api/dev/face-regions` | Read/rewrite the SVG region markup — backs the region editor. 404 unless `ENTDATABASE_DEV_TOOLS=1`, and auth required even then |
 
 ## Security
 
@@ -253,14 +258,19 @@ Implemented:
 - Parameterized SQL throughout; user-generated text HTML-escaped before rendering.
 - Session tokens in `HttpOnly`, `SameSite=Lax` cookies.
 - Ownership checks on destructive actions.
+- Authenticated by default — every read endpoint (search, case detail, images, filters,
+  anatomy, comments) requires a session; there is no exception list.
+- CORS restricted to an explicit origin allowlist (`ENTDATABASE_ALLOWED_ORIGINS`) with
+  credentials enabled; methods and headers narrowed.
+- Development-only routes (the region editor) hidden behind `ENTDATABASE_DEV_TOOLS` and
+  additionally login-gated.
 
 Not implemented — this is a prototype, and these are known gaps rather than oversights:
 
-- Authentication currently gates interactive features (favorites, comments) but not
-  case search, case detail, or image retrieval.
 - No SSO, no role-based access control, no access logging.
 - No server-side session expiry, no rate limiting on authentication.
-- Permissive CORS and open account registration.
+- Open account registration — any visitor can create an account and thereby reach every
+  case. Authentication is enforced, but authorization is all-or-nothing.
 
 **Do not deploy this as-is against real patient data.** Any clinical deployment needs
 institutional review, an appropriate hosting environment, and the gaps above closed.
