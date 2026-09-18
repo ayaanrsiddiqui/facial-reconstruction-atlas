@@ -54,6 +54,7 @@ end to end without real data being involved in a first deployment.
 - [How the case log is parsed](#how-the-case-log-is-parsed)
 - [Anatomy diagrams and the region editor](#anatomy-diagrams-and-the-region-editor)
 - [API reference](#api-reference)
+- [Tests](#tests)
 - [Security](#security)
 - [License](#license)
 
@@ -138,6 +139,8 @@ taking the whole app down. Startup failing shouldn't mean the login page 500s.
 | `field_options.py` | Filter dropdown vocabularies |
 | `generate_placeholders.py` | Generates stand-in case images and the face reference illustration |
 | `build.py` | Deployment build step (images + database) |
+| `create_account.py` | Creates a local account from the host shell — the account path while self-service registration is closed |
+| `tests/` | pytest suite covering the auth controls and image-path containment |
 | `region-editor.html` | Visual editor for authoring the anatomy diagram polygons |
 | `index.html` / `script.js` / `styles.css` | Single-page frontend |
 
@@ -155,10 +158,19 @@ cp sample_data/patient_log.xlsx .
 python generate_placeholders.py
 python -c "from app import init_database; init_database()"
 
+# Self-service registration is off by default, so make yourself an account
+python create_account.py yourname
+
 uvicorn app:app --reload --host 127.0.0.1 --port 8001
 ```
 
-Open <http://127.0.0.1:8001>.
+Open <http://127.0.0.1:8001> and sign in with the account you just created.
+
+`create_account.py` prompts for the password rather than taking it as an argument, so
+it stays out of shell history. `python create_account.py --list` shows what exists. If
+you would rather have the Register button back for local work, set
+`ENTDATABASE_OPEN_REGISTRATION=1` instead — see [Security](#security) for why it is off
+by default.
 
 ## Deployment
 
@@ -184,6 +196,8 @@ Relevant environment variables, all optional:
 | `ENTDATABASE_DB_PATH` | You | `metadata.db` beside `app.py` | Absolute or relative path to the SQLite database file |
 | `ENTDATABASE_IMAGE_ROOT` | You | `mock_o_drive/` beside `app.py` | Directory the case images are served from. Resolved to an absolute path once at import; `/api/image/...` refuses to serve anything outside it |
 | `ENTDATABASE_ALLOWED_ORIGINS` | You | `http://127.0.0.1:8001,http://localhost:8001` | Comma-separated CORS origin allowlist. Credentials are allowed, so this must stay an explicit list — never `*` |
+| `ENTDATABASE_OPEN_REGISTRATION` | You | unset | Set to `1` to allow self-service account creation via `POST /api/auth/register`. Unset, that route returns 404 and accounts are made with `create_account.py` |
+| `ENTDATABASE_SESSION_TTL_HOURS` | You | `12` | How long a session stays valid server-side, and how long the cookie is set for. A value that is not a positive whole number stops the app at startup rather than falling back |
 | `ENTDATABASE_DEV_TOOLS` | You | unset | Set to `1` to expose the region editor (`/region-editor`, `/api/dev/face-regions`). Unset, those routes return 404; set, they still require a logged-in user |
 | `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | unset | Opts the build process back into writes despite `VERCEL` being set |
 | `ENTDATABASE_DEMO_MODE` | You | unset | Public demo only — see below. Never set on an internal deployment |
@@ -199,6 +213,11 @@ ENTDATABASE_DEMO_MODE=1
 ENTDATABASE_ALLOW_DB_WRITES=1
 ENTDATABASE_DB_PATH=/tmp/metadata.db
 ```
+
+Since registration closed, the demo needs `ENTDATABASE_OPEN_REGISTRATION=1` on top of
+that if visitors should still be able to create the throwaway account that unlocks
+commenting. Without it the demo is browse-and-favorite only, and the header offers
+`Sign in` rather than `Create demo account`.
 
 `ENTDATABASE_DEMO_MODE` drops the login requirement on read endpoints and lets
 anonymous visitors favorite cases under a shared demo account, while still requiring a
@@ -288,10 +307,29 @@ The short version:
 | `GET /api/search` | Filtered/full-text case search (auth required) |
 | `GET /api/cases/{folder_name}` | Full case detail, including images (auth required) |
 | `GET /api/image/{folder_name}/{filename}` | Path-validated case photo proxy (auth required) |
-| `POST /api/auth/register` / `login` / `logout`, `GET /api/auth/me` | Cookie-session accounts |
+| `POST /api/auth/login` / `logout` | Cookie-session sign-in; sessions expire server-side after `ENTDATABASE_SESSION_TTL_HOURS` |
+| `POST /api/auth/register` | Self-service account creation. 404 unless `ENTDATABASE_OPEN_REGISTRATION=1` |
+| `GET /api/auth/me` | Session state — username (null when signed out), demo flag, and whether registration is open. Answers 200 either way, so the sign-in screen knows what to offer |
 | `POST /api/cases/{folder_name}/favorite`, `GET /api/favorites` | Per-user favorites (auth required) |
 | `GET/POST /api/cases/{folder_name}/comments`, `DELETE /api/comments/{id}` | Case comments (auth required to write, own-comment-only delete) |
 | `GET/POST /api/dev/face-regions` | Read/rewrite the SVG region markup — backs the region editor. 404 unless `ENTDATABASE_DEV_TOOLS=1`, and auth required even then |
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+`pytest` and `httpx` are kept in `requirements-dev.txt` rather than
+`requirements.txt`, so a production install stays the four runtime packages the
+hosting evaluation documents.
+
+The suite runs against a throwaway database and image directory in a temp folder and
+reads the fabricated sample spreadsheet directly, so it needs no setup and never
+touches `metadata.db` or `mock_o_drive/`. It covers the registration gate, server-side
+session expiry (including the migration off the pre-expiry schema), the
+`create_account.py` path end to end, and the image-path containment rules.
 
 ## Security
 
@@ -310,13 +348,23 @@ Implemented:
   credentials enabled; methods and headers narrowed.
 - Development-only routes (the region editor) hidden behind `ENTDATABASE_DEV_TOOLS` and
   additionally login-gated.
+- Registration closed by default — `POST /api/auth/register` returns 404 unless
+  `ENTDATABASE_OPEN_REGISTRATION=1`. `require_writes()` gates database writes, not
+  identity, so it was never an access control; accounts are created on the host with
+  `create_account.py` until SSO replaces them.
+- Server-side session expiry — every session carries an absolute `expires_at`, checked
+  on each validation and enforced regardless of what the browser kept. Expired rows are
+  deleted when they are next encountered, and the cookie lifetime is set from the same
+  TTL so the two cannot drift apart.
 
 Not implemented — this is a prototype, and these are known gaps rather than oversights:
 
 - No SSO, no role-based access control, no access logging.
-- No server-side session expiry, no rate limiting on authentication.
-- Open account registration — any visitor can create an account and thereby reach every
-  case. Authentication is enforced, but authorization is all-or-nothing.
+- No rate limiting on authentication.
+- Authorization is all-or-nothing: any account reaches every case.
+- Session expiry is absolute, not idle-based — a session ends `ENTDATABASE_SESSION_TTL_HOURS`
+  after sign-in whether or not it was in use. An idle timeout would need a write on every
+  authenticated read, which the read-only deployment mode cannot do.
 
 **Do not deploy this as-is against real patient data.** Any clinical deployment needs
 institutional review, an appropriate hosting environment, and the gaps above closed.

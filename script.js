@@ -44,6 +44,7 @@ const authUsername = document.getElementById("auth-username");
 const authPassword = document.getElementById("auth-password");
 const authError = document.getElementById("auth-error");
 const authSubmit = document.getElementById("auth-submit");
+const authSwitch = document.getElementById("auth-switch");
 const authSwitchText = document.getElementById("auth-switch-text");
 const authSwitchBtn = document.getElementById("auth-switch-btn");
 
@@ -385,14 +386,20 @@ function escapeHtml(value) {
 }
 
 let demoMode = false;
+// Whether the server will accept POST /api/auth/register at all. Closed by
+// default, so assume closed until /api/auth/me says otherwise.
+let registrationOpen = false;
 
 async function refreshAuthState() {
   try {
     const data = await fetchJson("/api/auth/me");
     currentUser = data.username || null;
     demoMode = Boolean(data.demo);
+    registrationOpen = Boolean(data.registration_open);
   } catch (error) {
     currentUser = null;
+    demoMode = false;
+    registrationOpen = false;
   }
   renderDemoBanner();
   renderAuthArea();
@@ -433,13 +440,15 @@ function renderAuthArea() {
     note.className = "auth-username";
     note.textContent = "Demo — sample data";
 
-    const demoRegisterBtn = document.createElement("button");
-    demoRegisterBtn.type = "button";
-    demoRegisterBtn.className = "secondary-btn auth-btn";
-    demoRegisterBtn.textContent = "Create demo account";
-    demoRegisterBtn.addEventListener("click", () => openAuthModal("register"));
+    const demoAuthBtn = document.createElement("button");
+    demoAuthBtn.type = "button";
+    demoAuthBtn.className = "secondary-btn auth-btn";
+    demoAuthBtn.textContent = registrationOpen ? "Create demo account" : "Sign in";
+    demoAuthBtn.addEventListener("click", () =>
+      openAuthModal(registrationOpen ? "register" : "login")
+    );
 
-    authArea.append(note, demoRegisterBtn);
+    authArea.append(note, demoAuthBtn);
   } else {
     const loginBtn = document.createElement("button");
     loginBtn.type = "button";
@@ -447,13 +456,18 @@ function renderAuthArea() {
     loginBtn.textContent = "Sign in";
     loginBtn.addEventListener("click", () => openAuthModal("login"));
 
-    const registerBtn = document.createElement("button");
-    registerBtn.type = "button";
-    registerBtn.className = "secondary-btn auth-btn";
-    registerBtn.textContent = "Register";
-    registerBtn.addEventListener("click", () => openAuthModal("register"));
+    authArea.append(loginBtn);
 
-    authArea.append(loginBtn, registerBtn);
+    // No Register button when the server has registration closed — accounts are
+    // created on the host with create_account.py until SSO lands.
+    if (registrationOpen) {
+      const registerBtn = document.createElement("button");
+      registerBtn.type = "button";
+      registerBtn.className = "secondary-btn auth-btn";
+      registerBtn.textContent = "Register";
+      registerBtn.addEventListener("click", () => openAuthModal("register"));
+      authArea.append(registerBtn);
+    }
   }
 }
 
@@ -466,6 +480,7 @@ function openAuthModal(mode) {
   authSwitchText.textContent =
     mode === "login" ? "Don't have an account?" : "Already have an account?";
   authSwitchBtn.textContent = mode === "login" ? "Create one" : "Sign in";
+  authSwitch.hidden = !registrationOpen;
   authModal.hidden = false;
   authUsername.focus();
 }

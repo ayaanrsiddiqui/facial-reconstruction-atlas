@@ -110,6 +110,11 @@ is on the work list, and this document will be updated when it lands. Flagged he
 it affects two things Health IT will care about — what must be installed on the
 application host, and where the source spreadsheet has to live in production.
 
+Two further packages — `pytest` and `httpx` — are listed separately in
+`requirements-dev.txt` and are used only to run the test suite. The application does not
+import them and they are not installed on a production host, so the runtime list above is
+unaffected.
+
 FastAPI pulls in Pydantic and Starlette transitively; `uvicorn[standard]` pulls in
 `httptools`, `uvloop`, `websockets`, and `watchfiles`.
 
@@ -130,28 +135,33 @@ pinned to exact versions with a lockfile if that is required for the deployment 
 
 ## 4. Code size and repository structure
 
-Approximately **6,700 lines** across ten files, plus a 270-line README.
+Approximately **7,100 lines** across eleven files, plus a 374-line README and a
+446-line test suite.
 
 | File | Lines | Role |
 | --- | --- | --- |
-| `styles.css` | 1,456 | Frontend styling |
-| `app.py` | 1,233 | FastAPI application: all routes, auth, database access, media serving |
-| `script.js` | 1,209 | Frontend application logic |
+| `styles.css` | 1,473 | Frontend styling |
+| `app.py` | 1,439 | FastAPI application: all routes, auth, database access, media serving |
+| `script.js` | 1,260 | Frontend application logic |
 | `region-editor.html` | 885 | Development tool — anatomy diagram region editor |
 | `import_patient_log.py` | 614 | Spreadsheet → database import |
-| `index.html` | 577 | Single-page application shell |
+| `index.html` | 582 | Single-page application shell |
 | `generate_placeholders.py` | 324 | Development tool — sample image generator |
 | `validate_spreadsheet.py` | 235 | Pre-flight spreadsheet validation |
 | `field_options.py` | 115 | Filter vocabularies and column definitions |
+| `create_account.py` | 110 | Creates a local account from the host shell |
 | `build.py` | 30 | Build step: stages sample data and seeds the database |
 
 Grouped by role:
 
-- **Backend, production:** ~2,200 lines (`app.py`, `import_patient_log.py`,
-  `validate_spreadsheet.py`, `field_options.py`)
-- **Frontend:** ~3,240 lines (`index.html`, `script.js`, `styles.css`)
+- **Backend, production:** ~2,500 lines (`app.py`, `import_patient_log.py`,
+  `validate_spreadsheet.py`, `field_options.py`, `create_account.py`)
+- **Frontend:** ~3,320 lines (`index.html`, `script.js`, `styles.css`)
 - **Development and build tooling:** ~1,240 lines, excludable from a production
   deployment (`region-editor.html`, `generate_placeholders.py`, `build.py`)
+- **Tests:** ~450 lines in `tests/`, excluded from the deployment bundle. They cover the
+  authentication controls in Section 10.3 and the path handling in Section 7.3, and run
+  against a temporary database and image directory with no setup.
 
 The repository is flat — no packages, no submodules, no monorepo structure.
 
@@ -229,7 +239,7 @@ SQLite, accessed through the Python standard library. Seven tables in two groups
 **Application data** (generated in use)
 
 - `users` — local accounts, expected to be removed when SSO is in place
-- `sessions` — active session tokens
+- `sessions` — active session tokens, each carrying its own expiry
 - `favorites` — per-user saved cases
 - `comments` — per-user case annotations
 
@@ -253,6 +263,7 @@ tractable:
 | `INTEGER PRIMARY KEY AUTOINCREMENT` | → `INT IDENTITY(1,1) PRIMARY KEY` |
 | `TEXT` columns | → `NVARCHAR(n)` / `NVARCHAR(MAX)` |
 | `datetime('now')` defaults | → `SYSUTCDATETIME()` |
+| `julianday()` in the session-expiry check | → `TRY_CONVERT(datetime2, expires_at)`; the predicate is a single named constant in `app.py` |
 | `COLLATE NOCASE` on `users.username` | → a case-insensitive SQL Server collation |
 | `sqlite3` driver calls | → `pyodbc` (adds a dependency and an ODBC driver) |
 | Connection handling | Connection pooling, and credential management for the DB account |
@@ -502,6 +513,31 @@ only favoriting and commenting; case search, case detail, filter vocabularies, c
 and image retrieval were all reachable without a session. All six now require an
 authenticated user. The rule is authenticated-by-default, with no exception list.
 
+**Account registration is closed by default.** `POST /api/auth/register` was guarded
+only by the check that gates database writes, which says nothing about who is asking:
+with writes enabled — the ordinary internal configuration — anyone who could reach the
+application could create an account and through it reach every case. The route now
+returns 404 unless `ENTDATABASE_OPEN_REGISTRATION=1`, the same disabled-by-default
+pattern the development routes use. The few accounts needed before SSO lands are created
+on the host with `create_account.py`, a command-line tool that prompts for the password
+rather than taking it as an argument, so it does not reach shell history or the process
+list. No new endpoint was added: the route inventory is unchanged, and there is no
+administrative HTTP surface to secure ahead of the role split in Section 10.2.
+
+**Sessions now expire server-side.** Every session row carries an absolute `expires_at`,
+written when the session is issued and compared on every validation; rows past their
+expiry are deleted when next encountered, and an expiry the database cannot read as a
+date is treated as expired rather than as valid. The lifetime is set by
+`ENTDATABASE_SESSION_TTL_HOURS`, defaulting to twelve hours, and the cookie is issued
+with the same lifetime so the browser cannot hold a cookie the server has already
+stopped honouring. Previously the thirty-day cookie `max_age` was the only lifetime, and
+a cookie is client state — a token copied out of the cookie jar stayed valid
+indefinitely. This is one of the controls that survives the move to SSO, since a local
+session is still issued once the identity provider's assertion is validated, so it is
+built to be kept rather than replaced. A database created by the previous version is
+migrated on first start; sessions that predate the column are cleared, which costs those
+users one additional sign-in.
+
 **Cross-origin policy is now an explicit allowlist.** The permissive configuration has
 been replaced with an origin allowlist read from `ENTDATABASE_ALLOWED_ORIGINS`, with
 methods narrowed to `GET`, `POST`, `DELETE` and headers to `Content-Type`.
@@ -520,25 +556,27 @@ the path-containment check in Section 7.3 compares against.
 
 ### 10.4 Interim controls still open
 
-**Account registration is open** to any party who can reach the application. This will be
-closed in the interim and removed entirely once SSO is in place.
-
 **Local password policy is minimal** (6-character minimum), set on the basis that the
 demonstration contains no real data. SSO removes the need to manage normal-user passwords
 locally; any remaining administrative or service credentials will require appropriate
 controls.
 
-**Sessions are not expired server-side.** A token remains valid until explicit logout.
-Server-enforced expiry is planned, and is one of the few items here that survives the move
-to SSO — a local session is still issued after the identity provider's assertion is
-validated.
-
 **Authentication endpoints are not rate-limited.** Largely moot once SSO replaces local
 authentication.
 
-The first, second and fourth of these are all attached to local password authentication,
-which SSO removes. Rather than invest in code scheduled for deletion, the intent is to
-close registration in the interim and let the SAML work retire the rest.
+**Session expiry is absolute rather than idle-based.** A session ends a fixed interval
+after sign-in whether or not it was in use. An idle timeout would require a database
+write on every authenticated read, which the read-only deployment mode cannot perform;
+if institutional policy specifies an idle timeout, that is a contained change to make
+once the hosting model and database platform are settled. The interval itself is
+configuration rather than code, so whatever value policy requires can be set without a
+release.
+
+Both of the first two are attached to local password authentication, which SSO removes.
+Rather than invest in code scheduled for deletion, the intent is to let the SAML work
+retire them. The two items that were listed here as open at the time of the last
+revision — open registration, and the absence of server-side session expiry — have been
+closed and moved to Section 10.3.
 
 ---
 
@@ -665,7 +703,7 @@ Unique on (`patient_row_id`, `filename`).
 | Table | Columns | Notes |
 | --- | --- | --- |
 | `users` | `id`, `username`, `password_hash`, `created_at` | `username` unique, case-insensitive. Expected to be reduced when SSO lands |
-| `sessions` | `token`, `user_id`, `created_at` | `token` is the primary key; `user_id` → `users.id` |
+| `sessions` | `token`, `user_id`, `created_at`, `expires_at` | `token` is the primary key; `user_id` → `users.id`. `expires_at` is compared on every session validation and the row deleted once past |
 | `favorites` | `user_id`, `patient_row_id`, `created_at` | Composite primary key on the first two columns |
 | `comments` | `id`, `patient_row_id`, `user_id`, `body`, `created_at` | Foreign keys to `patients` and `users` |
 
@@ -689,10 +727,10 @@ No stored procedures, triggers, or views.
 
 | Method | Path | Purpose | Auth today |
 | --- | --- | --- | --- |
-| POST | `/api/auth/register` | Create local account | None |
+| POST | `/api/auth/register` | Create local account | 404 unless enabled |
 | POST | `/api/auth/login` | Authenticate | None |
 | POST | `/api/auth/logout` | End session | Session |
-| GET | `/api/auth/me` | Current user | Session |
+| GET | `/api/auth/me` | Session state: username, demo flag, whether registration is open | None — carries no case data |
 
 **User content**
 
@@ -716,8 +754,10 @@ No stored procedures, triggers, or views.
 
 `GET /`, `GET /script.js`, `GET /styles.css`, `GET /static/face-reference.jpg`
 
-Every endpoint serving case data or images requires a session. `POST /api/auth/register`
-and `POST /api/auth/login` are unauthenticated by necessity; the four static-file routes
-serve the application shell and must load before sign-in. Development routes return 404
-unless `ENTDATABASE_DEV_TOOLS=1`. Sections 10.3 and 10.4 record what has been closed and
-what remains.
+Every endpoint serving case data or images requires a session. `POST /api/auth/login` is
+unauthenticated by necessity, and `GET /api/auth/me` answers without a session so the
+sign-in screen can tell whether to offer registration at all — it returns no case data.
+`POST /api/auth/register` returns 404 unless `ENTDATABASE_OPEN_REGISTRATION=1`. The four
+static-file routes serve the application shell and must load before sign-in. Development
+routes return 404 unless `ENTDATABASE_DEV_TOOLS=1`. Sections 10.3 and 10.4 record what
+has been closed and what remains.

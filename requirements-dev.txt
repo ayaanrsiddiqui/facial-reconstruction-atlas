@@ -1,0 +1,6 @@
+# Test-only dependencies. Deliberately separate from requirements.txt so the
+# production install stays the four runtime packages the hosting evaluation
+# documents (docs/TECHNICAL_OVERVIEW.md §3.2).
+-r requirements.txt
+pytest>=8.0.0
+httpx>=0.27.0

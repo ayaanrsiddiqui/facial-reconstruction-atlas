@@ -11,6 +11,7 @@ import secrets
 import shutil
 import sqlite3
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -358,8 +359,60 @@ def seed_database(conn: sqlite3.Connection) -> None:
 
 
 SESSION_COOKIE = "session_token"
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 PBKDF2_ITERATIONS = 200_000
+
+SESSION_TTL_ENV = "ENTDATABASE_SESSION_TTL_HOURS"
+DEFAULT_SESSION_TTL_HOURS = 12
+
+# A session row is unusable once it has passed its expiry — or if expires_at
+# cannot be read as a datetime at all, which julianday() reports as NULL. An
+# unreadable expiry counts as expired so the check cannot fail open.
+EXPIRED_SESSION_CLAUSE = (
+    "julianday(expires_at) IS NULL OR expires_at <= datetime('now')"
+)
+
+
+def session_ttl_hours() -> int:
+    """How long a newly issued session stays valid, in hours.
+
+    A mistyped TTL is a security control that silently did not apply, so an
+    unparseable or non-positive value raises instead of falling back to the
+    default. on_startup() reads it once so that surfaces at boot, not at the
+    first login attempt.
+    """
+    raw = os.getenv(SESSION_TTL_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_SESSION_TTL_HOURS
+    try:
+        hours = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"{SESSION_TTL_ENV} must be a whole number of hours, got {raw!r}."
+        ) from None
+    if hours < 1:
+        raise ValueError(f"{SESSION_TTL_ENV} must be at least 1 hour, got {hours}.")
+    return hours
+
+
+def session_expires_at() -> str:
+    """Absolute expiry for a session issued now, in SQLite's datetime() format.
+
+    Absolute rather than sliding: a sliding window would mean a database write
+    on every authenticated read, which the read-only deployment mode cannot do.
+    """
+    expiry = datetime.now(timezone.utc) + timedelta(hours=session_ttl_hours())
+    return expiry.strftime("%Y-%m-%d %H:%M:%S")
+
+
+SESSIONS_DDL = """
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+"""
 
 
 def ensure_auth_schema(conn: sqlite3.Connection) -> None:
@@ -373,16 +426,8 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-        """
-    )
+    conn.execute(SESSIONS_DDL)
+    migrate_sessions_to_expiring(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS favorites (
@@ -408,6 +453,38 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def migrate_sessions_to_expiring(conn: sqlite3.Connection) -> None:
+    """Add server-side expiry to a sessions table created before it had one.
+
+    Rows predating the column were issued with no server-side lifetime, so
+    they are discarded rather than backfilled from created_at: the cost is one
+    extra sign-in, and it leaves nothing in the table the expiry check would
+    have to guess about.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "expires_at" in columns:
+        return
+    conn.execute("DROP TABLE sessions")
+    conn.execute(SESSIONS_DDL)
+    print(
+        "[entdatabase] sessions table upgraded to server-side expiry; "
+        "existing sessions were cleared and users will need to sign in again.",
+        file=sys.stderr,
+    )
+
+
+def purge_expired_sessions(conn: sqlite3.Connection) -> None:
+    """Delete session rows the expiry check has already rejected.
+
+    Skipped on a read-only deployment, where the rows simply stay: expiry is
+    enforced by the comparison in get_current_user(), not by the row's absence.
+    """
+    if not database_writes_allowed():
+        return
+    conn.execute(f"DELETE FROM sessions WHERE {EXPIRED_SESSION_CLAUSE}")
+    conn.commit()
 
 
 def hash_password(password: str) -> str:
@@ -454,6 +531,23 @@ def require_writes() -> None:
         )
 
 
+def open_registration_enabled() -> bool:
+    """Self-service account creation is opt-in via ENTDATABASE_OPEN_REGISTRATION=1.
+
+    Off by default. require_writes() gates database writes, not identity, so
+    with only that check anyone who could reach the application with writes
+    enabled could create themselves an account. The handful of accounts needed
+    before SSO lands are created on the host with create_account.py.
+    """
+    return os.getenv("ENTDATABASE_OPEN_REGISTRATION") == "1"
+
+
+def require_open_registration() -> None:
+    """Hide the registration endpoint entirely unless it is switched on."""
+    if not open_registration_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
 def get_current_user(request: Request) -> sqlite3.Row | None:
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
@@ -462,14 +556,19 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
         if not table_exists(conn, "sessions") or not table_exists(conn, "users"):
             return None
         row = conn.execute(
-            """
-            SELECT users.id, users.username
+            f"""
+            SELECT users.id, users.username, ({EXPIRED_SESSION_CLAUSE}) AS expired
             FROM sessions
             JOIN users ON users.id = sessions.user_id
             WHERE sessions.token = ?
             """,
             (token,),
         ).fetchone()
+        if row is None:
+            return None
+        if row["expired"]:
+            purge_expired_sessions(conn)
+            return None
     return row
 
 
@@ -909,6 +1008,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup() -> None:
+    session_ttl_hours()  # fail at boot on a misconfigured TTL, not at first login
     init_database()
     if database_writes_allowed():
         with sqlite3.connect(DB_PATH) as conn:
@@ -992,6 +1092,7 @@ def search_cases(
 
 @app.post("/api/auth/register")
 def register(payload: AuthRequest, response: Response) -> dict[str, Any]:
+    require_open_registration()
     require_writes()
     username = validate_username(payload.username)
     password = validate_password(payload.password)
@@ -1012,7 +1113,8 @@ def register(payload: AuthRequest, response: Response) -> dict[str, Any]:
         user_id = cursor.lastrowid
         token = secrets.token_urlsafe(32)
         conn.execute(
-            "INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id)
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, session_expires_at()),
         )
         conn.commit()
 
@@ -1021,7 +1123,7 @@ def register(payload: AuthRequest, response: Response) -> dict[str, Any]:
         token,
         httponly=True,
         samesite="lax",
-        max_age=SESSION_MAX_AGE,
+        max_age=session_ttl_hours() * 3600,
         path="/",
     )
     return {"username": username}
@@ -1043,7 +1145,8 @@ def login(payload: AuthRequest, response: Response) -> dict[str, Any]:
 
         token = secrets.token_urlsafe(32)
         conn.execute(
-            "INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, row["id"])
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, row["id"], session_expires_at()),
         )
         conn.commit()
 
@@ -1052,7 +1155,7 @@ def login(payload: AuthRequest, response: Response) -> dict[str, Any]:
         token,
         httponly=True,
         samesite="lax",
-        max_age=SESSION_MAX_AGE,
+        max_age=session_ttl_hours() * 3600,
         path="/",
     )
     return {"username": row["username"]}
@@ -1072,12 +1175,18 @@ def logout(request: Request, response: Response) -> dict[str, Any]:
 
 @app.get("/api/auth/me")
 def get_me(request: Request) -> dict[str, Any]:
+    """Session state for the frontend.
+
+    Answers with 200 and a null username when there is no session, rather than
+    401: the sign-in screen has to know whether registration is open before
+    anyone has a session, otherwise it offers a Register button that 404s.
+    """
     user = get_current_user(request)
-    if user is None:
-        if demo_mode_enabled():
-            return {"username": None, "demo": True}
-        raise HTTPException(status_code=401, detail="Not logged in.")
-    return {"username": user["username"], "demo": False}
+    return {
+        "username": user["username"] if user is not None else None,
+        "demo": user is None and demo_mode_enabled(),
+        "registration_open": open_registration_enabled(),
+    }
 
 
 @app.get("/api/cases/{folder_name}")
