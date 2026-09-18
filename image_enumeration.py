@@ -136,3 +136,56 @@ def enumerate_case_images(folder: Path) -> list[tuple[str, str, int]]:
     for offset, filename in enumerate(sorted(unrecognised), start=len(rows) + 1):
         rows.append((filename, UNLABELLED, offset))
     return rows
+
+
+def apply_overrides(
+    rows: list[tuple[str, str, int]],
+    overrides: dict[str, tuple[str | None, str | None]],
+) -> tuple[list[tuple[str, str, int]], list[str]]:
+    """Re-label and re-position enumerated images from recorded human decisions.
+
+    An override carries a replacement stage, a filename this image should
+    follow, or both. Position is stored as "goes after this file" rather than
+    as a number because that is what the department's notes actually say — "ped
+    div goes bw 4 and 5" — and because a number would silently stop meaning
+    "between 4 and 5" as soon as another photograph is added to the case.
+
+    Anchors chain. `pt_34` reads "ped div goes bw 4 and 5, stage 3 goes bw ped
+    div and 5": the pedicle-division photograph anchors to stage 4, and stage 3
+    then anchors to the pedicle-division photograph. Each pass places whatever
+    it can, so the chain resolves in order.
+
+    Returns the reordered rows, and the filenames whose anchor could not be
+    resolved — a deleted anchor, or a cycle. Those keep their derived position
+    rather than being dropped.
+    """
+    labelled = {
+        filename: (overrides.get(filename, (None, None))[0] or stage)
+        for filename, stage, _ in rows
+    }
+    anchors = {
+        filename: overrides[filename][1]
+        for filename, _, _ in rows
+        if overrides.get(filename, (None, None))[1]
+    }
+
+    order = [filename for filename, _, _ in rows if filename not in anchors]
+    pending = dict(anchors)
+    while pending:
+        placeable = {
+            filename: anchor for filename, anchor in pending.items() if anchor in order
+        }
+        if not placeable:
+            break
+        # Deterministic regardless of dict ordering.
+        for filename in sorted(placeable):
+            order.insert(order.index(placeable[filename]) + 1, filename)
+            del pending[filename]
+
+    unresolved = sorted(pending)
+    order.extend(unresolved)
+
+    return (
+        [(filename, labelled[filename], index) for index, filename in enumerate(order, start=1)],
+        unresolved,
+    )

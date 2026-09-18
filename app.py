@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from field_options import FILTER_OPTIONS, PATIENT_COLUMNS
 from image_enumeration import (
     UNLABELLED,
+    apply_overrides,
     case_key,
     enumerate_case_images,
     index_case_folders,
@@ -285,6 +286,38 @@ def recreate_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+IMAGE_OVERRIDES_DDL = """
+    CREATE TABLE IF NOT EXISTS image_overrides (
+        folder_name TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        stage TEXT,
+        sort_after TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (folder_name, filename)
+    )
+"""
+
+
+def load_image_overrides(
+    conn: sqlite3.Connection,
+) -> dict[str, dict[str, tuple[str | None, str | None]]]:
+    """Stage and ordering corrections people have recorded, by folder and filename.
+
+    Deliberately not dropped by recreate_schema(): enumeration can be rebuilt
+    from the image store at any time, but a correction somebody made because
+    they know the case cannot be. Keeping the two apart is what lets the
+    import re-run without losing them.
+    """
+    conn.execute(IMAGE_OVERRIDES_DDL)
+    overrides: dict[str, dict[str, tuple[str | None, str | None]]] = {}
+    for folder_name, filename, stage, sort_after in conn.execute(
+        "SELECT folder_name, filename, stage, sort_after FROM image_overrides"
+    ):
+        overrides.setdefault(folder_name, {})[filename] = (stage, sort_after)
+    return overrides
+
+
 def _bootstrap_db_if_needed() -> None:
     """Seed a writable database location from the read-only bundled copy.
 
@@ -345,10 +378,13 @@ def seed_database(conn: sqlite3.Connection) -> None:
     columns = ", ".join(PATIENT_COLUMNS)
     placeholders = ", ".join("?" for _ in PATIENT_COLUMNS)
     folder_index = index_case_folders(IMAGE_ROOT)
+    overrides_by_folder = load_image_overrides(conn)
 
     enumerated_cases = enumerated_images = unlabelled_images = 0
     cases_without_folder: list[str] = []
     empty_folders: list[str] = []
+    unresolved_anchors: list[str] = []
+    overrides_applied = 0
 
     for patient in SEED_PATIENTS:
         key = case_key(patient["patient_id"])
@@ -365,6 +401,12 @@ def seed_database(conn: sqlite3.Connection) -> None:
             unlabelled_images += sum(1 for _, stage, _ in images if stage == UNLABELLED)
             if not images:
                 empty_folders.append(folder_name)
+
+        case_overrides = overrides_by_folder.get(folder_name, {})
+        if case_overrides:
+            images, unresolved = apply_overrides(images, case_overrides)
+            overrides_applied += sum(1 for name, _, _ in images if name in case_overrides)
+            unresolved_anchors.extend(f"{folder_name}/{name}" for name in unresolved)
 
         values = tuple(
             folder_name if column == "folder_name" else patient[column]
@@ -399,6 +441,8 @@ def seed_database(conn: sqlite3.Connection) -> None:
         unlabelled_images,
         cases_without_folder,
         empty_folders,
+        overrides_applied,
+        unresolved_anchors,
     )
 
 
@@ -408,6 +452,8 @@ def report_seeding(
     unlabelled_images: int,
     cases_without_folder: list[str],
     empty_folders: list[str],
+    overrides_applied: int = 0,
+    unresolved_anchors: list[str] | None = None,
 ) -> None:
     """Say what the image store actually yielded.
 
@@ -440,6 +486,20 @@ def report_seeding(
             f"image store: {cases_without_folder[:10]}. Their filenames came from the "
             "spreadsheet's stage columns instead, which is correct only for the "
             "generated placeholder set.",
+            file=sys.stderr,
+        )
+    if overrides_applied:
+        print(
+            f"[entdatabase] applied {overrides_applied} recorded stage/order "
+            "correction(s).",
+            file=sys.stderr,
+        )
+    if unresolved_anchors:
+        print(
+            f"[entdatabase] {len(unresolved_anchors)} correction(s) name a photograph to "
+            f"follow that no longer exists, or form a loop: {unresolved_anchors[:10]}. "
+            "Those images kept their derived position; their label, if any, still "
+            "applied.",
             file=sys.stderr,
         )
 

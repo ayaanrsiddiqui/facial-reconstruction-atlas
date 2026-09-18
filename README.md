@@ -137,6 +137,7 @@ taking the whole app down. Startup failing shouldn't mean the login page 500s.
 | `app.py` | FastAPI application: API, auth, media proxy, anatomy definitions |
 | `import_patient_log.py` | Reads the Excel case log into structured seed records |
 | `image_enumeration.py` | Reads each case folder to find the photographs actually present, and their stages |
+| `label_image.py` | Records a stage or ordering correction for one photograph, from the host shell |
 | `validate_spreadsheet.py` | Read-only pre-flight check on a candidate case log |
 | `inspect_image_share.py` | Read-only survey of a real image share — reports its file naming convention and the exceptions to it |
 | `field_options.py` | Filter dropdown vocabularies |
@@ -300,6 +301,35 @@ stage `Unlabelled` and sorted after the recognised images, so it appears in the 
 as a photograph nobody has labelled rather than disappearing. The department's folders
 hold special cases (`pt_20_b2.jpg` and similar) that nobody has a complete list of, and a
 photograph the application declines to show is worse than one it shows without a label.
+
+### Corrections
+
+Some cases need something no filename can carry. The department's notes say things like
+*"pt_34: ped div goes bw 4 and 5, stage 3 goes bw ped div and 5"* — the pedicle-division
+photograph belongs between stages 4 and 5, and stage 3's photograph belongs after *that*.
+`pt_34_img_3.jpg` parses correctly and says "stage 3"; it is knowledge about the case that
+says otherwise.
+
+Those are recorded per photograph with `label_image.py`:
+
+```bash
+python label_image.py pt_34                       # show the current order
+python label_image.py pt_34 pt_34_peddiv.jpg --stage "Pedicle division" --after pt_34_img_4.jpg
+python label_image.py pt_34 pt_34_img_3.jpg --after pt_34_peddiv.jpg
+```
+
+A correction says *which photograph this one follows*, not what number it is, because that
+is what the notes say and because a number stops meaning "between 4 and 5" as soon as
+another photograph is added to the case. Anchors chain, so the second command above places
+stage 3 after the pedicle-division photograph wherever that ends up. The stage label is a
+free string — `Pedicle division` is not one of the six, and does not need to be.
+
+Corrections live in `image_overrides`, which **the importer does not rebuild**. Enumeration
+can be re-derived from the image store at any time; a decision somebody made because they
+know the case cannot be. That separation is what lets the spreadsheet be re-imported
+without losing them, and it is why exceptions are recorded as data rather than written into
+`image_enumeration.py` — a rule in code would need a release to change, and the set of
+exceptions is known to be incomplete.
 
 Seeding prints a summary of what the store yielded — how many cases matched a folder, how
 many photographs were found, how many could not be labelled, and which cases had no
