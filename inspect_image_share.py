@@ -37,6 +37,22 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 DIGIT_RUN = re.compile(r"\d+")
 WORD = re.compile(r"[A-Za-z]+")
 
+# `pt_20_img_3`, `pt_20_img_3.1`, `pt_20_b2` — strip the case prefix and the
+# `img` marker, and whatever is left is what the file says about its stage.
+CASE_PREFIX = re.compile(r"(?i)^pt[._-]*\d+(?:[._-]\d+)?[._-]*")
+IMG_MARKER = re.compile(r"(?i)^img[._-]*")
+# Six reconstruction stages, optionally with a sub-index where a stage was
+# photographed more than once.
+STAGE_TOKEN = re.compile(r"^(\d+)(?:([._-])(\d+))?$")
+STAGE_COUNT = 6
+
+
+def stage_token(stem: str) -> str:
+    """What a filename says about its stage, with the boilerplate removed."""
+    token = CASE_PREFIX.sub("", stem, count=1)
+    token = IMG_MARKER.sub("", token, count=1)
+    return token.strip("._- ")
+
 
 def _line(char: str = "-", width: int = 74) -> None:
     print(char * width)
@@ -188,35 +204,74 @@ def survey(root: Path, show_rare_words: bool) -> int:
     print("  importer has to cope with.")
 
     _line()
-    print("Stage numbering")
-    dominant = shapes.most_common(1)[0][0]
-    print(f"  Assuming the convention is {dominant!r}.")
-    trailing: dict[str, list[int]] = defaultdict(list)
+    print("Stage tokens")
+    plain: Counter[int] = Counter()
+    subindexed: Counter[str] = Counter()
+    separators: Counter[str] = Counter()
+    out_of_range: Counter[int] = Counter()
+    special: Counter[str] = Counter()
+    stages_present: dict[str, set[int]] = defaultdict(set)
+
     for folder_name, files in per_folder.items():
         for path in files:
-            if shape(path.name) != dominant:
+            if path.suffix.lower() not in IMAGE_EXTENSIONS:
                 continue
-            found = DIGIT_RUN.findall(path.stem)
-            if found:
-                trailing[folder_name].append(int(found[-1]))
-    if not trailing:
-        print("  No trailing number found in the convention — order is not in the name.")
-    else:
-        all_numbers = [n for values in trailing.values() for n in values]
-        print(f"  Range across the share: {min(all_numbers)}–{max(all_numbers)}")
-        print(f"  Distinct values: {sorted(set(all_numbers))[:20]}")
-        duplicated = [f for f, v in trailing.items() if len(v) != len(set(v))]
-        gapped = [
-            f for f, v in trailing.items()
-            if sorted(set(v)) != list(range(min(v), min(v) + len(set(v))))
-        ]
-        print(f"  Folders repeating a number: {len(duplicated)}"
-              f"{' e.g. ' + label(duplicated[0]) if duplicated else ''}")
-        print(f"  Folders with a gap in the sequence: {len(gapped)}"
-              f"{' e.g. ' + label(gapped[0]) if gapped else ''}")
-        if max(all_numbers) > 6:
-            print("  -> numbers exceed the six stages, so this is a sequence rather than")
-            print("     a stage identifier, or some stages hold several photographs.")
+            token = stage_token(path.stem)
+            match = STAGE_TOKEN.match(token)
+            if match is None:
+                special[shape(token) or "(empty)"] += 1
+                continue
+            number = int(match.group(1))
+            separator, sub_index = match.group(2), match.group(3)
+            if not 1 <= number <= STAGE_COUNT:
+                out_of_range[number] += 1
+                continue
+            stages_present[folder_name].add(number)
+            if sub_index is None:
+                plain[number] += 1
+            else:
+                subindexed[f"{number}{separator}{sub_index}"] += 1
+                separators[separator] += 1
+
+    recognised = sum(plain.values()) + sum(subindexed.values())
+    total_images = sum(
+        1 for files in per_folder.values() for p in files
+        if p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+    print(f"  Images carrying a stage in 1-{STAGE_COUNT}: {recognised} of {total_images}")
+    print(f"    plain stage number:     {sum(plain.values())}  {dict(sorted(plain.items()))}")
+    print(f"    stage with a sub-index: {sum(subindexed.values())}")
+    if subindexed:
+        for token, count in subindexed.most_common(12):
+            print(f"      {token!r} - {count}")
+        print(f"    sub-index separator: {dict(separators)}"
+              f"{'   <-- more than one separator in use' if len(separators) > 1 else ''}")
+    if out_of_range:
+        print(f"    number outside 1-{STAGE_COUNT}: {sum(out_of_range.values())} "
+              f"{dict(sorted(out_of_range.items()))}")
+        print("      -> a sequence rather than a stage, or a seventh category.")
+
+    print(f"\n  Images with no recognisable stage: {sum(special.values())}")
+    if special:
+        print("  These are the special cases. Each needs a rule, or a human label:")
+        for token, count in special.most_common(20):
+            print(f"      {token!r} - {count} file(s)")
+        if len(special) > 20:
+            print(f"      ... and {len(special) - 20} further distinct token(s)")
+
+    print("\n  Stage coverage per case")
+    complete = [f for f, seen in stages_present.items() if len(seen) == STAGE_COUNT]
+    print(f"    cases with all {STAGE_COUNT} stages: {len(complete)} of {len(per_folder)}")
+    missing_counts = Counter(
+        STAGE_COUNT - len(stages_present.get(name, set())) for name in per_folder
+    )
+    print(f"    stages missing per case: {dict(sorted(missing_counts.items()))}")
+    never_seen = [
+        n for n in range(1, STAGE_COUNT + 1)
+        if not any(n in seen for seen in stages_present.values())
+    ]
+    if never_seen:
+        print(f"    stage number(s) never seen anywhere: {never_seen}")
 
     _line()
     print("Words used in filenames")
