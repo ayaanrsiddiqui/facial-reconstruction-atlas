@@ -21,6 +21,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from field_options import FILTER_OPTIONS, PATIENT_COLUMNS
+from image_enumeration import (
+    UNLABELLED,
+    case_key,
+    enumerate_case_images,
+    index_case_folders,
+)
 from import_patient_log import SEED_PATIENTS, format_locations_display
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -329,11 +335,41 @@ def init_database() -> None:
 
 
 def seed_database(conn: sqlite3.Connection) -> None:
+    """Load the case metadata, taking each case's images from the share.
+
+    The spreadsheet says which cases exist; the image store says which
+    photographs each one has. Where a case has no folder on the store at all,
+    the spreadsheet's stage columns still supply a filename list, so a database
+    can be seeded before the placeholder set has been generated.
+    """
     columns = ", ".join(PATIENT_COLUMNS)
     placeholders = ", ".join("?" for _ in PATIENT_COLUMNS)
+    folder_index = index_case_folders(IMAGE_ROOT)
+
+    enumerated_cases = enumerated_images = unlabelled_images = 0
+    cases_without_folder: list[str] = []
+    empty_folders: list[str] = []
 
     for patient in SEED_PATIENTS:
-        values = tuple(patient[column] for column in PATIENT_COLUMNS)
+        key = case_key(patient["patient_id"])
+        folder_name = folder_index.get(key) if key is not None else None
+
+        if folder_name is None:
+            folder_name = patient["folder_name"]
+            images = patient["images"]
+            cases_without_folder.append(patient["patient_id"])
+        else:
+            images = enumerate_case_images(IMAGE_ROOT / folder_name)
+            enumerated_cases += 1
+            enumerated_images += len(images)
+            unlabelled_images += sum(1 for _, stage, _ in images if stage == UNLABELLED)
+            if not images:
+                empty_folders.append(folder_name)
+
+        values = tuple(
+            folder_name if column == "folder_name" else patient[column]
+            for column in PATIENT_COLUMNS
+        )
         cursor = conn.execute(
             f"INSERT INTO patients ({columns}) VALUES ({placeholders})",
             values,
@@ -353,8 +389,58 @@ def seed_database(conn: sqlite3.Connection) -> None:
             "INSERT INTO images (patient_row_id, filename, stage, sort_order) VALUES (?, ?, ?, ?)",
             [
                 (patient_row_id, filename, stage, sort_order)
-                for filename, stage, sort_order in patient["images"]
+                for filename, stage, sort_order in images
             ],
+        )
+
+    report_seeding(
+        enumerated_cases,
+        enumerated_images,
+        unlabelled_images,
+        cases_without_folder,
+        empty_folders,
+    )
+
+
+def report_seeding(
+    enumerated_cases: int,
+    enumerated_images: int,
+    unlabelled_images: int,
+    cases_without_folder: list[str],
+    empty_folders: list[str],
+) -> None:
+    """Say what the image store actually yielded.
+
+    Run against the real share this is the only account of what the naming
+    rules did and did not recognise, so it is printed rather than counted
+    silently.
+    """
+    print(
+        f"[entdatabase] seeded {len(SEED_PATIENTS)} case(s); "
+        f"{enumerated_cases} matched a folder under {IMAGE_ROOT} "
+        f"and yielded {enumerated_images} image(s).",
+        file=sys.stderr,
+    )
+    if unlabelled_images:
+        print(
+            f"[entdatabase] {unlabelled_images} image(s) matched no known naming rule "
+            f"and are recorded as '{UNLABELLED}'. They are shown in the interface, "
+            "sorted after the labelled images.",
+            file=sys.stderr,
+        )
+    if empty_folders:
+        print(
+            f"[entdatabase] {len(empty_folders)} case folder(s) held no servable image: "
+            f"{empty_folders[:10]}. Those cases will not appear in search results.",
+            file=sys.stderr,
+        )
+    if cases_without_folder:
+        print(
+            f"[entdatabase] {len(cases_without_folder)} case(s) had no folder on the "
+            f"image store: {cases_without_folder[:10]}. Their filenames came from the "
+            "spreadsheet's stage columns instead, which is correct only for the "
+            "generated placeholder set.",
+            file=sys.stderr,
         )
 
 

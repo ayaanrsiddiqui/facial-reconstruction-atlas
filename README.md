@@ -52,6 +52,7 @@ end to end without real data being involved in a first deployment.
 - [Deployment](#deployment)
 - [Sample data](#sample-data)
 - [How the case log is parsed](#how-the-case-log-is-parsed)
+- [Image naming](#image-naming)
 - [Anatomy diagrams and the region editor](#anatomy-diagrams-and-the-region-editor)
 - [API reference](#api-reference)
 - [Tests](#tests)
@@ -135,6 +136,7 @@ taking the whole app down. Startup failing shouldn't mean the login page 500s.
 | --- | --- |
 | `app.py` | FastAPI application: API, auth, media proxy, anatomy definitions |
 | `import_patient_log.py` | Reads the Excel case log into structured seed records |
+| `image_enumeration.py` | Reads each case folder to find the photographs actually present, and their stages |
 | `validate_spreadsheet.py` | Read-only pre-flight check on a candidate case log |
 | `inspect_image_share.py` | Read-only survey of a real image share — reports its file naming convention and the exceptions to it |
 | `field_options.py` | Filter dropdown vocabularies |
@@ -266,14 +268,44 @@ Only a missing required column is a hard failure.
   imported and remains keyword-searchable, filed under region `Unknown`, with a warning.
 - **Repair methods are normalized** to five canonical categories via keyword and synonym
   matching; unmatched text is preserved verbatim with a warning.
-- **Stage columns are photo flags.** An `x` or `y` means that stage's image exists under
-  a fixed filename; anything else means no image for that stage.
+- **Images come from the image store, not the spreadsheet.** Each case's folder is
+  enumerated and the filenames actually present are recorded — see
+  [Image naming](#image-naming). The spreadsheet's stage columns are used only as a
+  fallback for a case with no folder on the store, which is what lets a database be
+  seeded before the placeholder set has been generated.
 - **Incomplete rows are imported and visibly flagged** in the UI rather than presented
   as complete.
 - **Duplicate case identifiers** are dropped with a warning; the first occurrence wins.
 
 New vocabulary — an unfamiliar flap, graft, or sub-location — imports fine but will not
 appear in the filter dropdowns until added to `field_options.py`.
+
+## Image naming
+
+`image_enumeration.py` walks each case folder and records what is there. Two naming
+conventions are recognised, each by name rather than by pattern-sniffing:
+
+| Convention | Shape | Where it comes from |
+| --- | --- | --- |
+| Departmental | `pt_<case>_img_<stage>[.<index>].jpg` | The real share. Stage is 1–6; the optional index distinguishes a stage photographed more than once (`3.1`, `3.2`). Not every case has every stage |
+| Placeholder | `01_preop.jpg` … `06_healed.jpg` | What `generate_placeholders.py` writes, so the fabricated twelve-case set and the public demo keep working |
+
+Case folders are matched to spreadsheet rows by number, so `pt_20`, `pt_020` and
+`ENT-020` all resolve to the same case. `patients.folder_name` holds the real directory
+name and `patients.patient_id` holds the study identifier; the two are no longer assumed
+to be the same string.
+
+**A filename matching neither convention is kept, not dropped.** It is imported with the
+stage `Unlabelled` and sorted after the recognised images, so it appears in the interface
+as a photograph nobody has labelled rather than disappearing. The department's folders
+hold special cases (`pt_20_b2.jpg` and similar) that nobody has a complete list of, and a
+photograph the application declines to show is worse than one it shows without a label.
+
+Seeding prints a summary of what the store yielded — how many cases matched a folder, how
+many photographs were found, how many could not be labelled, and which cases had no
+folder at all. `validate_spreadsheet.py` reports the same thing read-only, naming each
+unlabelled file, and `inspect_image_share.py` surveys a share's naming before any of it is
+wired in.
 
 ## Anatomy diagrams and the region editor
 

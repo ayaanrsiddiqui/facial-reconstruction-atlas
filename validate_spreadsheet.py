@@ -17,7 +17,9 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from app import IMAGE_ROOT
 from field_options import FILTER_OPTIONS
+from image_enumeration import UNLABELLED, case_key, enumerate_case_images, index_case_folders
 from import_patient_log import (
     CANONICAL_METHODS,
     COL_PT,
@@ -194,25 +196,61 @@ def main() -> int:
         print("  OK — every marked cell uses 'x'/'y' as expected.")
 
     _line()
-    print("Photo folders (mock_o_drive/)")
-    mock_dir = Path(__file__).resolve().parent / "mock_o_drive"
-    if mock_dir.is_dir():
-        existing_folders = {p.name for p in mock_dir.iterdir() if p.is_dir()}
-        seed_ids = {p["patient_id"] for p in patients}
-        new_cases = sorted(seed_ids - existing_folders)
-        orphaned = sorted(existing_folders - seed_ids)
-        if new_cases:
-            print(f"  {len(new_cases)} case(s) have no matching folder yet (expected for brand-new")
-            print("  cases — regenerate placeholders, or add real photos, before going live):")
-            print(f"    {new_cases[:15]}{'...' if len(new_cases) > 15 else ''}")
+    print("Image store")
+    if IMAGE_ROOT.is_dir():
+        print(f"  Root: {IMAGE_ROOT}")
+        folder_index = index_case_folders(IMAGE_ROOT)
+        case_keys = {case_key(p["patient_id"]): p["patient_id"] for p in patients}
+
+        missing = sorted(pid for key, pid in case_keys.items() if key not in folder_index)
+        orphaned = sorted(name for key, name in folder_index.items() if key not in case_keys)
+        if missing:
+            issues += len(missing)
+            print(f"  {len(missing)} case(s) have no folder on the store (expected for")
+            print("  brand-new cases — regenerate placeholders, or add the photographs,")
+            print("  before going live). Their filenames would come from the spreadsheet's")
+            print("  stage columns instead, which is only correct for the placeholder set:")
+            print(f"    {missing[:15]}{'...' if len(missing) > 15 else ''}")
         else:
             print("  OK — every case has a matching folder.")
         if orphaned:
-            print(f"  {len(orphaned)} folder(s) in mock_o_drive/ no longer match any case in this")
-            print(f"  spreadsheet (fine if intentional, otherwise check for a renumbered Pt #):")
+            print(f"  {len(orphaned)} folder(s) match no case in this spreadsheet (fine if")
+            print("  intentional, otherwise check for a renumbered Pt #):")
             print(f"    {orphaned[:15]}{'...' if len(orphaned) > 15 else ''}")
+
+        total = 0
+        unlabelled: list[str] = []
+        empty: list[str] = []
+        for key, pid in sorted(case_keys.items(), key=lambda kv: kv[1]):
+            folder_name = folder_index.get(key)
+            if folder_name is None:
+                continue
+            rows = enumerate_case_images(IMAGE_ROOT / folder_name)
+            total += len(rows)
+            if not rows:
+                empty.append(folder_name)
+            unlabelled.extend(
+                f"{folder_name}/{filename}"
+                for filename, stage, _ in rows
+                if stage == UNLABELLED
+            )
+        print(f"  {total} photograph(s) across {len(folder_index)} folder(s).")
+        if empty:
+            issues += len(empty)
+            print(f"  {len(empty)} folder(s) hold no servable image, so those cases will not")
+            print(f"  appear in search results at all: {empty[:10]}")
+        if unlabelled:
+            issues += len(unlabelled)
+            print(f"  {len(unlabelled)} photograph(s) match no known naming rule. They are")
+            print(f"  imported and shown, labelled '{UNLABELLED}', sorted after the rest:")
+            for name in unlabelled[:15]:
+                print(f"    {name}")
+            if len(unlabelled) > 15:
+                print(f"    ... and {len(unlabelled) - 15} more")
+        else:
+            print("  OK — every photograph resolved to one of the six stages.")
     else:
-        print("  mock_o_drive/ not found — skipping (nothing to cross-check yet).")
+        print(f"  {IMAGE_ROOT} not found — skipping (nothing to cross-check yet).")
 
     _line("=")
     if issues == 0:
