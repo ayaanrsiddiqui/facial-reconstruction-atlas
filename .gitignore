@@ -28,6 +28,14 @@ mock_o_drive/
 o_drive/
 static/face-reference.jpg
 
+# Working notes about real cases — the image-naming exception list, hand-off
+# notes, anything written about specific patients. Put them in notes/ so they
+# cannot reach a public repository by accident.
+notes/
+*.docx
+*.doc
+*.rtf
+
 # Secrets
 .env
 .env.*
