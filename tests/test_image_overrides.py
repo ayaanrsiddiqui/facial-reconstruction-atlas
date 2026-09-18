@@ -22,7 +22,7 @@ def _derived(*filenames):
 
 
 def _order(rows):
-    return [name for name, _, _ in rows]
+    return [name for name, _, _, _ in rows]
 
 
 def test_pt_34_chain():
@@ -37,8 +37,8 @@ def test_pt_34_chain():
         "pt_34_peddiv.jpg",
     )
     overrides = {
-        "pt_34_peddiv.jpg": (PED_DIV, "pt_34_img_4.jpg"),
-        "pt_34_img_3.jpg": (None, "pt_34_peddiv.jpg"),
+        "pt_34_peddiv.jpg": (PED_DIV, "pt_34_img_4.jpg", False),
+        "pt_34_img_3.jpg": (None, "pt_34_peddiv.jpg", False),
     }
 
     result, unresolved = enum.apply_overrides(rows, overrides)
@@ -53,15 +53,15 @@ def test_pt_34_chain():
         "pt_34_img_6.jpg",
     ]
     assert unresolved == []
-    assert result[3] == ("pt_34_peddiv.jpg", PED_DIV, 4)
-    assert [order for _, _, order in result] == [1, 2, 3, 4, 5, 6, 7]
+    assert result[3] == ("pt_34_peddiv.jpg", PED_DIV, 4, False)
+    assert [order for _, _, order, _ in result] == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_pt_38_stage_2_between_4_and_5():
     rows = _derived(*[f"pt_38_img_{n}.jpg" for n in range(1, 7)])
 
     result, unresolved = enum.apply_overrides(
-        rows, {"pt_38_img_2.jpg": (None, "pt_38_img_4.jpg")}
+        rows, {"pt_38_img_2.jpg": (None, "pt_38_img_4.jpg", False)}
     )
 
     assert _order(result) == [
@@ -79,7 +79,7 @@ def test_pt_66_stage_3_between_4_and_5():
     rows = _derived(*[f"pt_66_img_{n}.jpg" for n in range(1, 7)])
 
     result, _ = enum.apply_overrides(
-        rows, {"pt_66_img_3.jpg": (None, "pt_66_img_4.jpg")}
+        rows, {"pt_66_img_3.jpg": (None, "pt_66_img_4.jpg", False)}
     )
 
     assert _order(result) == [
@@ -96,7 +96,7 @@ def test_a_moved_image_keeps_its_label_unless_the_override_changes_it():
     rows = _derived(*[f"pt_38_img_{n}.jpg" for n in range(1, 7)])
 
     result, _ = enum.apply_overrides(
-        rows, {"pt_38_img_2.jpg": (None, "pt_38_img_4.jpg")}
+        rows, {"pt_38_img_2.jpg": (None, "pt_38_img_4.jpg", False)}
     )
 
     moved = next(r for r in result if r[0] == "pt_38_img_2.jpg")
@@ -106,11 +106,11 @@ def test_a_moved_image_keeps_its_label_unless_the_override_changes_it():
 def test_relabelling_without_moving():
     rows = _derived("pt_54_img_1.jpg", "pt_54_extra.jpg")
 
-    result, _ = enum.apply_overrides(rows, {"pt_54_extra.jpg": (PED_DIV, None)})
+    result, _ = enum.apply_overrides(rows, {"pt_54_extra.jpg": (PED_DIV, None, False)})
 
     assert result == [
-        ("pt_54_img_1.jpg", "Pre-op", 1),
-        ("pt_54_extra.jpg", PED_DIV, 2),
+        ("pt_54_img_1.jpg", "Pre-op", 1, False),
+        ("pt_54_extra.jpg", PED_DIV, 2, False),
     ]
 
 
@@ -119,7 +119,7 @@ def test_an_anchor_that_no_longer_exists_is_reported_not_dropped():
     rows = _derived("pt_54_img_1.jpg", "pt_54_img_2.jpg")
 
     result, unresolved = enum.apply_overrides(
-        rows, {"pt_54_img_2.jpg": (PED_DIV, "pt_54_deleted.jpg")}
+        rows, {"pt_54_img_2.jpg": (PED_DIV, "pt_54_deleted.jpg", False)}
     )
 
     assert unresolved == ["pt_54_img_2.jpg"]
@@ -133,8 +133,8 @@ def test_a_cycle_terminates_and_is_reported():
     result, unresolved = enum.apply_overrides(
         rows,
         {
-            "pt_1_img_2.jpg": (None, "pt_1_img_3.jpg"),
-            "pt_1_img_3.jpg": (None, "pt_1_img_2.jpg"),
+            "pt_1_img_2.jpg": (None, "pt_1_img_3.jpg", False),
+            "pt_1_img_3.jpg": (None, "pt_1_img_2.jpg", False),
         },
     )
 
@@ -146,10 +146,10 @@ def test_an_override_for_a_file_that_is_gone_is_simply_unused():
     rows = _derived("pt_1_img_1.jpg")
 
     result, unresolved = enum.apply_overrides(
-        rows, {"pt_1_vanished.jpg": (PED_DIV, "pt_1_img_1.jpg")}
+        rows, {"pt_1_vanished.jpg": (PED_DIV, "pt_1_img_1.jpg", False)}
     )
 
-    assert result == [("pt_1_img_1.jpg", "Pre-op", 1)]
+    assert result == [("pt_1_img_1.jpg", "Pre-op", 1, False)]
     assert unresolved == []
 
 
@@ -224,3 +224,43 @@ def test_a_correction_survives_a_full_reimport(tmp_path, monkeypatch):
 
     assert conn.execute("SELECT COUNT(*) FROM image_overrides").fetchone()[0] == 2
     conn.close()
+
+
+def test_hiding_removes_an_image_from_the_atlas_but_not_from_its_place():
+    """Unhiding has to put it back where it was, so position is preserved."""
+    rows = _derived("pt_11_img_1.jpg", "IMG_4821.jpg", "pt_11_img_2.jpg")
+
+    result, _ = enum.apply_overrides(rows, {"IMG_4821.jpg": (None, None, True)})
+
+    assert [(name, hidden) for name, _, _, hidden in result] == [
+        ("pt_11_img_1.jpg", False),
+        ("IMG_4821.jpg", True),
+        ("pt_11_img_2.jpg", False),
+    ]
+
+
+def test_moving_an_image_to_the_front():
+    """What 'move up' does to the second photograph — there is no file to follow."""
+    rows = _derived("pt_1_img_1.jpg", "pt_1_img_2.jpg", "pt_1_img_3.jpg")
+
+    result, unresolved = enum.apply_overrides(
+        rows, {"pt_1_img_2.jpg": (None, enum.FRONT, False)}
+    )
+
+    assert _order(result) == ["pt_1_img_2.jpg", "pt_1_img_1.jpg", "pt_1_img_3.jpg"]
+    assert unresolved == []
+
+
+def test_a_chain_can_hang_off_a_front_anchored_image():
+    rows = _derived("pt_1_img_1.jpg", "pt_1_img_2.jpg", "pt_1_img_3.jpg")
+
+    result, unresolved = enum.apply_overrides(
+        rows,
+        {
+            "pt_1_img_3.jpg": (None, enum.FRONT, False),
+            "pt_1_img_2.jpg": (None, "pt_1_img_3.jpg", False),
+        },
+    )
+
+    assert _order(result) == ["pt_1_img_3.jpg", "pt_1_img_2.jpg", "pt_1_img_1.jpg"]
+    assert unresolved == []

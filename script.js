@@ -63,6 +63,10 @@ const caseModalNotes = document.getElementById("case-modal-notes");
 const caseModalCommentsHeading = document.getElementById("case-modal-comments-heading");
 const caseModalCommentList = document.getElementById("case-modal-comment-list");
 const caseModalCommentFormSlot = document.getElementById("case-modal-comment-form-slot");
+const caseModalEditor = document.getElementById("case-modal-editor");
+const caseEditorToggle = document.getElementById("case-editor-toggle");
+const caseEditorList = document.getElementById("case-editor-list");
+const caseEditorError = document.getElementById("case-editor-error");
 
 let currentUser = null;
 let authMode = "login";
@@ -389,6 +393,9 @@ let demoMode = false;
 // Whether the server will accept POST /api/auth/register at all. Closed by
 // default, so assume closed until /api/auth/me says otherwise.
 let registrationOpen = false;
+// Administrators may correct the order and labelling of a case's photographs.
+// Everyone else only reads, so the editor is never rendered for them.
+let isAdmin = false;
 
 async function refreshAuthState() {
   try {
@@ -396,10 +403,12 @@ async function refreshAuthState() {
     currentUser = data.username || null;
     demoMode = Boolean(data.demo);
     registrationOpen = Boolean(data.registration_open);
+    isAdmin = Boolean(data.is_admin);
   } catch (error) {
     currentUser = null;
     demoMode = false;
     registrationOpen = false;
+    isAdmin = false;
   }
   renderDemoBanner();
   renderAuthArea();
@@ -508,8 +517,10 @@ async function handleAuthSubmit(event) {
     if (!response.ok) {
       throw new Error(data.detail || "Something went wrong.");
     }
-    currentUser = data.username;
-    renderAuthArea();
+    // Re-read the session rather than trusting the login response: it carries
+    // the username but not the role, and a stale isAdmin hides the editor from
+    // an administrator until they reload.
+    await refreshAuthState();
     closeAuthModal();
     await loadConfig();
     runSearch();
@@ -528,6 +539,7 @@ async function handleLogout() {
     console.error(error);
   }
   currentUser = null;
+  isAdmin = false;
   renderAuthArea();
   runSearch();
 }
@@ -836,8 +848,142 @@ function openCaseModal(folderName) {
   }
   renderCaseModal(caseRecord);
   caseModal.hidden = false;
+  resetCaseEditor();
   loadCaseImages(folderName, caseRecord.patient_id);
 }
+
+// ---------------------------------------------------------------------------
+// Editing a case's photographs. Reordering is ↑/↓ rather than drag: the people
+// who will maintain this are not necessarily at a desktop, and every
+// correction in the department's notes is a single move anyway.
+// ---------------------------------------------------------------------------
+
+function resetCaseEditor() {
+  caseModalEditor.hidden = !isAdmin;
+  caseEditorList.hidden = true;
+  caseEditorList.innerHTML = "";
+  caseEditorError.hidden = true;
+  caseEditorToggle.textContent = "Edit";
+}
+
+function renderCaseEditor(images) {
+  const lastIndex = images.length - 1;
+  caseEditorList.innerHTML = images
+    .map((image, index) => {
+      const name = escapeHtml(image.filename);
+      return `
+        <div class="editor-row${image.hidden ? " editor-row--hidden" : ""}" data-filename="${name}">
+          <span class="editor-position">${index + 1}</span>
+          <div class="editor-details">
+            <input
+              class="editor-stage"
+              type="text"
+              value="${escapeHtml(image.stage)}"
+              aria-label="Stage for ${name}"
+            />
+            <span class="editor-filename">${name}</span>
+          </div>
+          <div class="editor-actions">
+            <button type="button" data-action="up" aria-label="Move ${name} earlier"
+              ${index === 0 ? "disabled" : ""}>↑</button>
+            <button type="button" data-action="down" aria-label="Move ${name} later"
+              ${index === lastIndex ? "disabled" : ""}>↓</button>
+            <button type="button" data-action="hide" class="editor-hide">
+              ${image.hidden ? "Show" : "Hide"}
+            </button>
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
+async function loadCaseEditor() {
+  const folderName = activeModalFolder;
+  const data = await fetchJson(`/api/cases/${encodeURIComponent(folderName)}/images`);
+  if (activeModalFolder !== folderName) {
+    return;
+  }
+  renderCaseEditor(data.images);
+}
+
+async function sendEditorChange(path, body) {
+  caseEditorError.hidden = true;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.detail || "That change could not be saved.");
+  }
+  return data;
+}
+
+async function applyEditorChange(path, body) {
+  const folderName = activeModalFolder;
+  try {
+    const data = await sendEditorChange(path, body);
+    if (activeModalFolder !== folderName) {
+      return;
+    }
+    renderCaseEditor(data.images);
+    // The carousel shows only what is not hidden, so re-read the case.
+    const record = resultsByFolder.get(folderName);
+    loadCaseImages(folderName, record ? record.patient_id : "");
+  } catch (error) {
+    caseEditorError.textContent = error.message;
+    caseEditorError.hidden = false;
+  }
+}
+
+function editorPath(filename, suffix = "") {
+  return `/api/cases/${encodeURIComponent(activeModalFolder)}/images/${encodeURIComponent(
+    filename
+  )}${suffix}`;
+}
+
+caseEditorToggle.addEventListener("click", async () => {
+  if (!caseEditorList.hidden) {
+    caseEditorList.hidden = true;
+    caseEditorToggle.textContent = "Edit";
+    return;
+  }
+  caseEditorToggle.textContent = "Done";
+  caseEditorList.hidden = false;
+  try {
+    await loadCaseEditor();
+  } catch (error) {
+    caseEditorError.textContent = "Could not load the photograph list.";
+    caseEditorError.hidden = false;
+  }
+});
+
+caseEditorList.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+  const row = button.closest(".editor-row");
+  const filename = row.dataset.filename;
+  if (button.dataset.action === "hide") {
+    applyEditorChange(editorPath(filename), {
+      hidden: !row.classList.contains("editor-row--hidden"),
+    });
+  } else {
+    applyEditorChange(editorPath(filename, "/move"), {
+      direction: button.dataset.action,
+    });
+  }
+});
+
+caseEditorList.addEventListener("change", (event) => {
+  if (!event.target.classList.contains("editor-stage")) {
+    return;
+  }
+  const row = event.target.closest(".editor-row");
+  applyEditorChange(editorPath(row.dataset.filename), { stage: event.target.value });
+});
 
 function closeCaseModal() {
   caseModal.hidden = true;

@@ -138,47 +138,66 @@ def enumerate_case_images(folder: Path) -> list[tuple[str, str, int]]:
     return rows
 
 
+FRONT = ""
+"""An anchor meaning "first in the case", as distinct from None, which means
+"wherever enumeration put it". Moving the second photograph up needs a way to
+say this."""
+
+
 def apply_overrides(
     rows: list[tuple[str, str, int]],
-    overrides: dict[str, tuple[str | None, str | None]],
-) -> tuple[list[tuple[str, str, int]], list[str]]:
-    """Re-label and re-position enumerated images from recorded human decisions.
+    overrides: dict[str, tuple[str | None, str | None, bool]],
+) -> tuple[list[tuple[str, str, int, bool]], list[str]]:
+    """Re-label, re-position and hide enumerated images from recorded decisions.
 
     An override carries a replacement stage, a filename this image should
-    follow, or both. Position is stored as "goes after this file" rather than
-    as a number because that is what the department's notes actually say — "ped
-    div goes bw 4 and 5" — and because a number would silently stop meaning
-    "between 4 and 5" as soon as another photograph is added to the case.
+    follow, whether it is hidden, or any combination. Position is stored as
+    "goes after this file" rather than as a number because that is what the
+    department's notes say — "ped div goes bw 4 and 5" — and because a number
+    would silently stop meaning "between 4 and 5" as soon as another
+    photograph is added to the case.
 
     Anchors chain. `pt_34` reads "ped div goes bw 4 and 5, stage 3 goes bw ped
     div and 5": the pedicle-division photograph anchors to stage 4, and stage 3
     then anchors to the pedicle-division photograph. Each pass places whatever
     it can, so the chain resolves in order.
 
-    Returns the reordered rows, and the filenames whose anchor could not be
-    resolved — a deleted anchor, or a cycle. Those keep their derived position
-    rather than being dropped.
+    Hidden images keep their place in the ordering rather than being removed
+    from it, so unhiding one puts it back where it was.
+
+    Returns rows as (filename, stage, sort order, hidden), and the filenames
+    whose anchor could not be resolved — a deleted anchor, or a cycle. Those
+    keep their derived position rather than being dropped.
     """
+    def override(filename: str) -> tuple[str | None, str | None, bool]:
+        return overrides.get(filename, (None, None, False))
+
     labelled = {
-        filename: (overrides.get(filename, (None, None))[0] or stage)
-        for filename, stage, _ in rows
+        filename: (override(filename)[0] or stage) for filename, stage, _ in rows
     }
+    concealed = {filename: override(filename)[2] for filename, _, _ in rows}
     anchors = {
-        filename: overrides[filename][1]
+        filename: override(filename)[1]
         for filename, _, _ in rows
-        if overrides.get(filename, (None, None))[1]
+        if override(filename)[1] is not None
     }
 
     order = [filename for filename, _, _ in rows if filename not in anchors]
     pending = dict(anchors)
+
+    # Front-anchored images first, so that a chain can then hang off them.
+    # Reversed, so that sorting is stable once they are all inserted at 0.
+    for filename in sorted((f for f, a in pending.items() if a == FRONT), reverse=True):
+        order.insert(0, filename)
+        del pending[filename]
+
     while pending:
         placeable = {
             filename: anchor for filename, anchor in pending.items() if anchor in order
         }
         if not placeable:
             break
-        # Deterministic regardless of dict ordering.
-        for filename in sorted(placeable):
+        for filename in sorted(placeable):  # deterministic regardless of dict order
             order.insert(order.index(placeable[filename]) + 1, filename)
             del pending[filename]
 
@@ -186,6 +205,9 @@ def apply_overrides(
     order.extend(unresolved)
 
     return (
-        [(filename, labelled[filename], index) for index, filename in enumerate(order, start=1)],
+        [
+            (filename, labelled[filename], index, concealed[filename])
+            for index, filename in enumerate(order, start=1)
+        ],
         unresolved,
     )

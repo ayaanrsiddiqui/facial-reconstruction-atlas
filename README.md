@@ -322,7 +322,20 @@ photograph belongs between stages 4 and 5, and stage 3's photograph belongs afte
 `pt_34_img_3.jpg` parses correctly and says "stage 3"; it is knowledge about the case that
 says otherwise.
 
-Those are recorded per photograph with `label_image.py`:
+An administrator makes those corrections **in the application**: open a case, click
+`Edit` under Photographs, and each image gets ↑/↓, an editable stage label, and a
+Hide toggle. Reordering is buttons rather than drag so it works by touch and by
+keyboard, and so the frontend keeps its zero dependencies. Hiding removes a photograph
+from the case view — a duplicate, a bad frame, a stray camera file — without touching
+the image store, and the hidden row keeps its place in the list so showing it again puts
+it back.
+
+This is the path meant to outlast whoever set the atlas up: it needs no shell, no release
+and no knowledge of the naming convention. Who made each correction, and when, is
+recorded alongside it.
+
+The same corrections can be made from the host shell with `label_image.py`, which is
+useful for loading a batch out of a notes file:
 
 ```bash
 python label_image.py pt_34                       # show the current order
@@ -387,6 +400,9 @@ The short version:
 | `GET /api/auth/me` | Session state — username (null when signed out), demo flag, and whether registration is open. Answers 200 either way, so the sign-in screen knows what to offer |
 | `POST /api/cases/{folder_name}/favorite`, `GET /api/favorites` | Per-user favorites (auth required) |
 | `GET/POST /api/cases/{folder_name}/comments`, `DELETE /api/comments/{id}` | Case comments (auth required to write, own-comment-only delete) |
+| `GET /api/cases/{folder_name}/images` | Every photograph on a case, hidden ones included — backs the editor (administrator only) |
+| `POST /api/cases/{folder_name}/images/{filename}` | Relabel or hide one photograph (administrator only) |
+| `POST /api/cases/{folder_name}/images/{filename}/move` | Move one photograph up or down (administrator only) |
 | `GET/POST /api/dev/face-regions` | Read/rewrite the SVG region markup — backs the region editor. 404 unless `ENTDATABASE_DEV_TOOLS=1`, and auth required even then |
 
 ## Tests
@@ -418,7 +434,8 @@ Implemented:
 - Session tokens in `HttpOnly`, `SameSite=Lax` cookies.
 - Ownership checks on destructive actions.
 - An administrator role separate from ordinary accounts, so that editing the case record
-  is not available to every signed-in user. Granted only from the host shell.
+  is not available to every signed-in user. Granted only from the host shell, and every
+  edit records which account made it.
 - Authenticated by default — every read endpoint (search, case detail, images, filters,
   anatomy, comments) requires a session; there is no exception list.
 - CORS restricted to an explicit origin allowlist (`ENTDATABASE_ALLOWED_ORIGINS`) with

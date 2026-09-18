@@ -1471,3 +1471,135 @@ button:disabled {
   .demo-banner { background: #33290f; border-bottom-color: #5a4a1e; color: #e8d5a4; }
   .demo-banner strong { color: #f5e9c9; }
 }
+
+/* ---------------------------------------------------------------------------
+   Case photograph editor — administrators only. Reordering is ↑/↓ rather than
+   drag so it works by touch and by keyboard, and needs no JS dependency.
+   --------------------------------------------------------------------------- */
+
+.case-modal-editor {
+  border-top: 1px solid var(--border, #e2e8f0);
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.editor-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+  padding-right: 0.25rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.editor-row {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+}
+
+.editor-row--hidden {
+  opacity: 0.55;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(100, 116, 139, 0.08) 6px,
+    rgba(100, 116, 139, 0.08) 12px
+  );
+}
+
+.editor-position {
+  font-variant-numeric: tabular-nums;
+  color: #64748b;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.editor-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.editor-stage {
+  font: inherit;
+  color: #1e293b;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.editor-stage:hover,
+.editor-stage:focus {
+  border-color: var(--border, #cbd5e1);
+  background: #fff;
+}
+
+.editor-filename {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.editor-actions button {
+  font: inherit;
+  font-size: 0.85rem;
+  /* The page's base button rule paints text white for its filled buttons;
+     these are outline buttons on white, so the colour has to be restated. */
+  color: #1e293b;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.editor-actions button:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.editor-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.editor-hide {
+  min-width: 3.4rem;
+}
+
+.editor-error {
+  margin: 0.5rem 0 0;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}

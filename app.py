@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from field_options import FILTER_OPTIONS, PATIENT_COLUMNS
 from image_enumeration import (
+    FRONT,
     UNLABELLED,
     apply_overrides,
     case_key,
@@ -279,6 +280,7 @@ def recreate_schema(conn: sqlite3.Connection) -> None:
             filename TEXT NOT NULL,
             stage TEXT NOT NULL,
             sort_order INTEGER NOT NULL,
+            hidden INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (patient_row_id) REFERENCES patients(id),
             UNIQUE (patient_row_id, filename)
         )
@@ -292,16 +294,33 @@ IMAGE_OVERRIDES_DDL = """
         filename TEXT NOT NULL,
         stage TEXT,
         sort_after TEXT,
+        hidden INTEGER NOT NULL DEFAULT 0,
         note TEXT NOT NULL DEFAULT '',
+        updated_by TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (folder_name, filename)
     )
 """
 
+# Columns added after the table first shipped. Added rather than rebuilt: the
+# table holds decisions people made, which is the one thing here that cannot be
+# regenerated.
+IMAGE_OVERRIDE_ADDED_COLUMNS = {
+    "hidden": "INTEGER NOT NULL DEFAULT 0",
+    "updated_by": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+def migrate_image_overrides(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(image_overrides)")}
+    for column, definition in IMAGE_OVERRIDE_ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE image_overrides ADD COLUMN {column} {definition}")
+
 
 def load_image_overrides(
     conn: sqlite3.Connection,
-) -> dict[str, dict[str, tuple[str | None, str | None]]]:
+) -> dict[str, dict[str, tuple[str | None, str | None, bool]]]:
     """Stage and ordering corrections people have recorded, by folder and filename.
 
     Deliberately not dropped by recreate_schema(): enumeration can be rebuilt
@@ -310,11 +329,16 @@ def load_image_overrides(
     import re-run without losing them.
     """
     conn.execute(IMAGE_OVERRIDES_DDL)
-    overrides: dict[str, dict[str, tuple[str | None, str | None]]] = {}
-    for folder_name, filename, stage, sort_after in conn.execute(
-        "SELECT folder_name, filename, stage, sort_after FROM image_overrides"
+    migrate_image_overrides(conn)
+    overrides: dict[str, dict[str, tuple[str | None, str | None, bool]]] = {}
+    for folder_name, filename, stage, sort_after, hidden in conn.execute(
+        "SELECT folder_name, filename, stage, sort_after, hidden FROM image_overrides"
     ):
-        overrides.setdefault(folder_name, {})[filename] = (stage, sort_after)
+        overrides.setdefault(folder_name, {})[filename] = (
+            stage,
+            sort_after,
+            bool(hidden),
+        )
     return overrides
 
 
@@ -402,11 +426,12 @@ def seed_database(conn: sqlite3.Connection) -> None:
             if not images:
                 empty_folders.append(folder_name)
 
+        # Always applied, even when empty, so that everything downstream sees
+        # one row shape rather than two.
         case_overrides = overrides_by_folder.get(folder_name, {})
-        if case_overrides:
-            images, unresolved = apply_overrides(images, case_overrides)
-            overrides_applied += sum(1 for name, _, _ in images if name in case_overrides)
-            unresolved_anchors.extend(f"{folder_name}/{name}" for name in unresolved)
+        images, unresolved = apply_overrides(images, case_overrides)
+        overrides_applied += sum(1 for name, _, _, _ in images if name in case_overrides)
+        unresolved_anchors.extend(f"{folder_name}/{name}" for name in unresolved)
 
         values = tuple(
             folder_name if column == "folder_name" else patient[column]
@@ -428,10 +453,13 @@ def seed_database(conn: sqlite3.Connection) -> None:
             ],
         )
         conn.executemany(
-            "INSERT INTO images (patient_row_id, filename, stage, sort_order) VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO images (patient_row_id, filename, stage, sort_order, hidden)
+            VALUES (?, ?, ?, ?, ?)
+            """,
             [
-                (patient_row_id, filename, stage, sort_order)
-                for filename, stage, sort_order in images
+                (patient_row_id, filename, stage, sort_order, int(hidden))
+                for filename, stage, sort_order, hidden in images
             ],
         )
 
@@ -854,6 +882,15 @@ class CommentRequest(BaseModel):
     body: str
 
 
+class ImageEditRequest(BaseModel):
+    stage: str | None = None
+    hidden: bool | None = None
+
+
+class ImageMoveRequest(BaseModel):
+    direction: str
+
+
 class FaceRegionShape(BaseModel):
     region: str
     label: str
@@ -1042,7 +1079,7 @@ def fetch_patients(
             """
             SELECT id, filename, stage, sort_order
             FROM images
-            WHERE patient_row_id = ?
+            WHERE patient_row_id = ? AND hidden = 0
             ORDER BY sort_order, filename
             """,
             (patient["id"],),
@@ -1551,6 +1588,195 @@ def delete_comment(comment_id: int, request: Request) -> dict[str, Any]:
         conn.commit()
 
     return {"ok": True}
+
+
+def case_image_rows(conn: sqlite3.Connection, folder_name: str) -> list[dict[str, Any]]:
+    """Every photograph on a case, hidden ones included — the administrator's view."""
+    patient_row_id = get_patient_row_id(conn, folder_name)
+    rows = conn.execute(
+        """
+        SELECT filename, stage, sort_order, hidden
+        FROM images
+        WHERE patient_row_id = ?
+        ORDER BY sort_order, filename
+        """,
+        (patient_row_id,),
+    ).fetchall()
+    return [
+        {
+            "filename": row["filename"],
+            "stage": row["stage"],
+            "sort_order": row["sort_order"],
+            "hidden": bool(row["hidden"]),
+            "url": f"/api/image/{folder_name}/{row['filename']}",
+        }
+        for row in rows
+    ]
+
+
+def rewrite_case_images(conn: sqlite3.Connection, folder_name: str) -> None:
+    """Recompute one case's photographs from the store and the recorded decisions.
+
+    Called after an edit so the change is visible immediately rather than at
+    the next import. The image store stays the source of truth for which files
+    exist; only their labelling and order come from the override table.
+    """
+    folder = IMAGE_ROOT / folder_name
+    if not folder.is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail="This case has no folder on the image store, so its photographs "
+            "cannot be edited.",
+        )
+    overrides = load_image_overrides(conn).get(folder_name, {})
+    images, _ = apply_overrides(enumerate_case_images(folder), overrides)
+    patient_row_id = get_patient_row_id(conn, folder_name)
+    conn.execute("DELETE FROM images WHERE patient_row_id = ?", (patient_row_id,))
+    conn.executemany(
+        """
+        INSERT INTO images (patient_row_id, filename, stage, sort_order, hidden)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (patient_row_id, filename, stage, sort_order, int(hidden))
+            for filename, stage, sort_order, hidden in images
+        ],
+    )
+    conn.commit()
+
+
+def save_override(
+    conn: sqlite3.Connection,
+    folder_name: str,
+    filename: str,
+    *,
+    stage: str | None,
+    sort_after: str | None,
+    hidden: bool,
+    username: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO image_overrides
+            (folder_name, filename, stage, sort_after, hidden, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (folder_name, filename) DO UPDATE SET
+            stage = excluded.stage,
+            sort_after = excluded.sort_after,
+            hidden = excluded.hidden,
+            updated_by = excluded.updated_by,
+            updated_at = datetime('now')
+        """,
+        (folder_name, filename, stage, sort_after, int(hidden), username),
+    )
+
+
+def current_override(
+    conn: sqlite3.Connection, folder_name: str, filename: str
+) -> tuple[str | None, str | None, bool]:
+    row = conn.execute(
+        "SELECT stage, sort_after, hidden FROM image_overrides "
+        "WHERE folder_name = ? AND filename = ?",
+        (folder_name, filename),
+    ).fetchone()
+    if row is None:
+        return None, None, False
+    return row["stage"], row["sort_after"], bool(row["hidden"])
+
+
+def checked_case_image(
+    conn: sqlite3.Connection, folder_name: str, filename: str
+) -> list[dict[str, Any]]:
+    """Validate the two path segments and confirm the photograph is on this case."""
+    validate_path_segment(folder_name, "folder name")
+    validate_path_segment(filename, "filename")
+    images = case_image_rows(conn, folder_name)
+    if filename not in {image["filename"] for image in images}:
+        raise HTTPException(status_code=404, detail="No such photograph on this case.")
+    return images
+
+
+@app.get("/api/cases/{folder_name}/images")
+def list_case_images(
+    folder_name: str, _user: sqlite3.Row = Depends(require_admin)
+) -> dict[str, Any]:
+    with get_db_connection() as conn:
+        validate_path_segment(folder_name, "folder name")
+        return {"images": case_image_rows(conn, folder_name)}
+
+
+# POST rather than PATCH: PATCH would have to be added to the CORS method
+# allowlist, and widening that to gain a verb is a poor trade.
+@app.post("/api/cases/{folder_name}/images/{filename}")
+def edit_case_image(
+    folder_name: str,
+    filename: str,
+    payload: ImageEditRequest,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict[str, Any]:
+    require_writes()
+    with get_db_connection() as conn:
+        checked_case_image(conn, folder_name, filename)
+        stage, sort_after, hidden = current_override(conn, folder_name, filename)
+
+        if payload.stage is not None:
+            stage = payload.stage.strip() or None
+            if stage is not None and len(stage) > 60:
+                raise HTTPException(status_code=400, detail="That label is too long.")
+        if payload.hidden is not None:
+            hidden = payload.hidden
+
+        save_override(
+            conn,
+            folder_name,
+            filename,
+            stage=stage,
+            sort_after=sort_after,
+            hidden=hidden,
+            username=user["username"],
+        )
+        rewrite_case_images(conn, folder_name)
+        return {"images": case_image_rows(conn, folder_name)}
+
+
+@app.post("/api/cases/{folder_name}/images/{filename}/move")
+def move_case_image(
+    folder_name: str,
+    filename: str,
+    payload: ImageMoveRequest,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict[str, Any]:
+    require_writes()
+    if payload.direction not in {"up", "down"}:
+        raise HTTPException(status_code=400, detail="Direction must be up or down.")
+
+    with get_db_connection() as conn:
+        images = checked_case_image(conn, folder_name, filename)
+        order = [image["filename"] for image in images]
+        index = order.index(filename)
+
+        if payload.direction == "up":
+            if index == 0:
+                raise HTTPException(status_code=400, detail="Already first.")
+            # Moving past the first photograph leaves nothing to follow.
+            sort_after = FRONT if index == 1 else order[index - 2]
+        else:
+            if index == len(order) - 1:
+                raise HTTPException(status_code=400, detail="Already last.")
+            sort_after = order[index + 1]
+
+        stage, _, hidden = current_override(conn, folder_name, filename)
+        save_override(
+            conn,
+            folder_name,
+            filename,
+            stage=stage,
+            sort_after=sort_after,
+            hidden=hidden,
+            username=user["username"],
+        )
+        rewrite_case_images(conn, folder_name)
+        return {"images": case_image_rows(conn, folder_name)}
 
 
 @app.get("/api/image/{folder_name}/{filename}")
