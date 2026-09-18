@@ -65,7 +65,6 @@ def test_me_reports_whether_registration_is_open(client, monkeypatch):
     assert anonymous.status_code == 200
     assert anonymous.json() == {
         "username": None,
-        "demo": False,
         "registration_open": False,
         "is_admin": False,
     }

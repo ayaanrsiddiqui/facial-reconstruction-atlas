@@ -1456,22 +1456,6 @@ button:disabled {
 }
 
 
-/* Public demonstration banner — shown only when ENTDATABASE_DEMO_MODE=1 */
-.demo-banner {
-  background: #fdf3d8;
-  border-bottom: 1px solid #e3cd94;
-  color: #5c4813;
-  font-size: 0.85rem;
-  line-height: 1.5;
-  padding: 0.7rem 1.25rem;
-  text-align: center;
-}
-.demo-banner strong { color: #3f3009; }
-@media (prefers-color-scheme: dark) {
-  .demo-banner { background: #33290f; border-bottom-color: #5a4a1e; color: #e8d5a4; }
-  .demo-banner strong { color: #f5e9c9; }
-}
-
 /* ---------------------------------------------------------------------------
    Case photograph editor — administrators only. Reordering is ↑/↓ rather than
    drag so it works by touch and by keyboard, and needs no JS dependency.

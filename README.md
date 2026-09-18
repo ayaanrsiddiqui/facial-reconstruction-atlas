@@ -13,7 +13,10 @@ documenting the reconstruction from pre-operative through healed.
 Built as a research tool for the UVA Health Department of Otolaryngology.
 
 **[Live demo →](https://facial-reconstruction-atlas.vercel.app)** (seeded with the 12
-fabricated cases described below — nothing real)
+fabricated cases described below — nothing real). **Sign-in required:** every endpoint
+needs an account, and self-service registration is off by default, so the deployment
+must either enable `ENTDATABASE_OPEN_REGISTRATION` or have accounts made with
+`create_account.py`.
 
 > **This is a public, code-only copy.**
 > No real case data, patient imagery, or institutional configuration is included here.
@@ -216,32 +219,26 @@ Relevant environment variables, all optional:
 | `ENTDATABASE_SESSION_TTL_HOURS` | You | `12` | How long a session stays valid server-side, and how long the cookie is set for. A value that is not a positive whole number stops the app at startup rather than falling back |
 | `ENTDATABASE_DEV_TOOLS` | You | unset | Set to `1` to expose the region editor (`/region-editor`, `/api/dev/face-regions`). Unset, those routes return 404; set, they still require a logged-in user |
 | `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | unset | Opts the build process back into writes despite `VERCEL` being set |
-| `ENTDATABASE_DEMO_MODE` | You | unset | Public demo only — see below. Never set on an internal deployment |
 | `ENTDATABASE_XLSX_PATH` | You | auto-detected | Points the importer at a specific spreadsheet instead of the auto-detected default |
 | `VERCEL` | Vercel itself | — | Detected by `app.py` to switch SQLite to read-only mode at runtime |
 
-The [live demo](https://facial-reconstruction-atlas.vercel.app) runs this specific set,
-which is what turns the login-walled internal tool into something anyone can click
-around without an account:
+The [live demo](https://facial-reconstruction-atlas.vercel.app) runs:
 
 ```
-ENTDATABASE_DEMO_MODE=1
 ENTDATABASE_ALLOW_DB_WRITES=1
 ENTDATABASE_DB_PATH=/tmp/metadata.db
 ```
 
-Since registration closed, the demo needs `ENTDATABASE_OPEN_REGISTRATION=1` on top of
-that if visitors should still be able to create the throwaway account that unlocks
-commenting. Without it the demo is browse-and-favorite only, and the header offers
-`Sign in` rather than `Create demo account`.
+**Every endpoint requires a session, including on the public demo.** There is no
+anonymous-browsing mode: the rule is authenticated-by-default with no exception list.
+A deployment that wants visitors to let themselves in has to set
+`ENTDATABASE_OPEN_REGISTRATION=1` as well; otherwise its accounts are made on the host
+with `create_account.py`.
 
-`ENTDATABASE_DEMO_MODE` drops the login requirement on read endpoints and lets
-anonymous visitors favorite cases under a shared demo account, while still requiring a
-real (if throwaway) account to post a comment — see `require_user`/`demo_mode_enabled`
-in `app.py`. `/tmp` on a serverless instance is per-instance and ephemeral, so demo
-favorites and comments reset whenever the instance recycles; that's intended for a
-public demo, not a bug. An internal deployment should leave `ENTDATABASE_DEMO_MODE`
-unset entirely — every data endpoint then requires a real login.
+`/tmp` on a serverless instance is per-instance and ephemeral, so accounts, favorites
+and comments there reset whenever the instance recycles. That is intended for a
+throwaway demo, not a bug — but it does mean an account made on the demo will stop
+working without warning.
 
 ## Sample data
 
@@ -397,7 +394,7 @@ The short version:
 | `GET /api/image/{folder_name}/{filename}` | Path-validated case photo proxy (auth required) |
 | `POST /api/auth/login` / `logout` | Cookie-session sign-in; sessions expire server-side after `ENTDATABASE_SESSION_TTL_HOURS` |
 | `POST /api/auth/register` | Self-service account creation. 404 unless `ENTDATABASE_OPEN_REGISTRATION=1` |
-| `GET /api/auth/me` | Session state — username (null when signed out), demo flag, and whether registration is open. Answers 200 either way, so the sign-in screen knows what to offer |
+| `GET /api/auth/me` | Session state — username (null when signed out), whether registration is open, and whether the account is an administrator. Answers 200 either way, so the sign-in screen knows what to offer |
 | `POST /api/cases/{folder_name}/favorite`, `GET /api/favorites` | Per-user favorites (auth required) |
 | `GET/POST /api/cases/{folder_name}/comments`, `DELETE /api/comments/{id}` | Case comments (auth required to write, own-comment-only delete) |
 | `GET /api/cases/{folder_name}/images` | Every photograph on a case, hidden ones included — backs the editor (administrator only) |

@@ -71,19 +71,6 @@ def test_require_admin_refuses_an_anonymous_caller(client):
     assert caught.value.status_code == 401
 
 
-def test_the_demo_account_is_never_an_administrator(client, monkeypatch):
-    """Anonymous browsing on the public demo must not reach an editing endpoint."""
-    monkeypatch.setenv("ENTDATABASE_DEMO_MODE", "1")
-    from starlette.requests import Request
-
-    request = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
-
-    assert app_module.require_user(request) == app_module.DEMO_USER
-    with pytest.raises(HTTPException) as caught:
-        app_module.require_admin(request)
-    assert caught.value.status_code == 403
-
-
 def test_me_reports_the_flag(client, monkeypatch):
     _make(monkeypatch, "curator", admin=True)
     client.post("/api/auth/login", json={"username": "curator", "password": "correct horse"})

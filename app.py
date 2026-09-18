@@ -769,33 +769,14 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
     return row
 
 
-def demo_mode_enabled() -> bool:
-    """Public demonstration instance: browsing without an account.
-
-    Set only on the public demo deployment, which runs on fabricated sample data
-    and a read-only database. Never set on an internal deployment — it disables
-    the login requirement on every read endpoint.
-    """
-    return os.getenv("ENTDATABASE_DEMO_MODE") == "1"
-
-
-# The shared demo account browses; it never administers anything.
-DEMO_USER: dict[str, Any] = {"id": 0, "username": "demo", "is_admin": 0}
-
-
-def require_user(request: Request) -> sqlite3.Row | dict[str, Any]:
-    # A real session always wins. The demo user is only a fallback for anonymous
-    # visitors on the public demo — otherwise a signed-in user's favorites and
-    # comments would be written against the shared demo account.
+def require_user(request: Request) -> sqlite3.Row:
     user = get_current_user(request)
-    if user is not None:
-        return user
-    if demo_mode_enabled():
-        return DEMO_USER
-    raise HTTPException(status_code=401, detail="Login required.")
+    if user is None:
+        raise HTTPException(status_code=401, detail="Login required.")
+    return user
 
 
-def require_admin(request: Request) -> sqlite3.Row | dict[str, Any]:
+def require_admin(request: Request) -> sqlite3.Row:
     """An administrator edits the case record; an ordinary user only reads it.
 
     Separate from require_user() rather than folded into it, because the
@@ -1410,7 +1391,6 @@ def get_me(request: Request) -> dict[str, Any]:
     user = get_current_user(request)
     return {
         "username": user["username"] if user is not None else None,
-        "demo": user is None and demo_mode_enabled(),
         "registration_open": open_registration_enabled(),
         "is_admin": bool(user["is_admin"]) if user is not None else False,
     }
@@ -1535,13 +1515,6 @@ def list_comments(
 @app.post("/api/cases/{folder_name}/comments")
 def add_comment(folder_name: str, payload: CommentRequest, request: Request) -> dict[str, Any]:
     require_writes()
-    # Favorites are open to anonymous visitors on the public demo, but comments are
-    # free text on a publicly reachable page — those need a real account.
-    if demo_mode_enabled() and get_current_user(request) is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Sign in to leave a comment. Accounts on this demo are temporary.",
-        )
     user = require_user(request)
 
     body = payload.body.strip()

@@ -25,7 +25,6 @@ os.environ["ENTDATABASE_IMAGE_ROOT"] = str(_TMP / "images")
 os.environ["ENTDATABASE_XLSX_PATH"] = str(REPO_ROOT / "sample_data" / "patient_log.xlsx")
 os.environ["ENTDATABASE_ALLOW_DB_WRITES"] = "1"
 os.environ.pop("ENTDATABASE_OPEN_REGISTRATION", None)
-os.environ.pop("ENTDATABASE_DEMO_MODE", None)
 os.environ.pop("ENTDATABASE_SESSION_TTL_HOURS", None)
 
 import app as app_module  # noqa: E402  (must follow the environment setup above)

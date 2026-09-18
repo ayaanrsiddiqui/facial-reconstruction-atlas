@@ -389,7 +389,6 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-let demoMode = false;
 // Whether the server will accept POST /api/auth/register at all. Closed by
 // default, so assume closed until /api/auth/me says otherwise.
 let registrationOpen = false;
@@ -401,25 +400,14 @@ async function refreshAuthState() {
   try {
     const data = await fetchJson("/api/auth/me");
     currentUser = data.username || null;
-    demoMode = Boolean(data.demo);
     registrationOpen = Boolean(data.registration_open);
     isAdmin = Boolean(data.is_admin);
   } catch (error) {
     currentUser = null;
-    demoMode = false;
     registrationOpen = false;
     isAdmin = false;
   }
-  renderDemoBanner();
   renderAuthArea();
-}
-
-function renderDemoBanner() {
-  const banner = document.getElementById("demo-banner");
-  if (banner) banner.hidden = !demoMode;
-  // "Internal Use Only" is true of the internal deployment, not of the public demo.
-  const badge = document.getElementById("internal-badge");
-  if (badge) badge.hidden = demoMode;
 }
 
 function renderAuthArea() {
@@ -443,21 +431,6 @@ function renderAuthArea() {
     logoutBtn.addEventListener("click", handleLogout);
 
     authArea.append(label, favoritesLink, logoutBtn);
-  } else if (demoMode) {
-    // Demo: browsing and favorites are open; signing in is optional and unlocks comments.
-    const note = document.createElement("span");
-    note.className = "auth-username";
-    note.textContent = "Demo — sample data";
-
-    const demoAuthBtn = document.createElement("button");
-    demoAuthBtn.type = "button";
-    demoAuthBtn.className = "secondary-btn auth-btn";
-    demoAuthBtn.textContent = registrationOpen ? "Create demo account" : "Sign in";
-    demoAuthBtn.addEventListener("click", () =>
-      openAuthModal(registrationOpen ? "register" : "login")
-    );
-
-    authArea.append(note, demoAuthBtn);
   } else {
     const loginBtn = document.createElement("button");
     loginBtn.type = "button";
