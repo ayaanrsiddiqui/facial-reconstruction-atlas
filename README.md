@@ -20,6 +20,21 @@ fabricated cases described below — nothing real)
 > The repository ships with a small set of **fabricated** sample cases so the
 > application runs end to end out of the box. See [Sample data](#sample-data).
 
+## Technical overview for hosting evaluation
+
+Infrastructure and security reviewers start here:
+**[docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md)**
+([PDF](docs/Facial_Reconstruction_Atlas_Technical_Overview.pdf)) is the document prepared
+for UVA Health Information Technology, dated 5 September 2026. It covers the software
+stack and third-party packages, code size and repository structure, the database schema
+with a SQL Server migration assessment, how image paths are stored and resolved, the data
+elements displayed and their PHI and consent constraints, expected user population and
+load, and the security controls both implemented and still open.
+
+This repository is the code that document describes. It carries fabricated sample data
+and no path to any departmental file share, so it can be cloned, stood up, and exercised
+end to end without real data being involved in a first deployment.
+
 ## Screenshots
 
 | Anatomy explorer | Case detail |
@@ -28,6 +43,7 @@ fabricated cases described below — nothing real)
 
 ## Contents
 
+- [Technical overview for hosting evaluation](#technical-overview-for-hosting-evaluation)
 - [Features](#features)
 - [Tech stack](#tech-stack)
 - [Architecture](#architecture)
