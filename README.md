@@ -136,6 +136,7 @@ taking the whole app down. Startup failing shouldn't mean the login page 500s.
 | `app.py` | FastAPI application: API, auth, media proxy, anatomy definitions |
 | `import_patient_log.py` | Reads the Excel case log into structured seed records |
 | `validate_spreadsheet.py` | Read-only pre-flight check on a candidate case log |
+| `inspect_image_share.py` | Read-only survey of a real image share — reports its file naming convention and the exceptions to it |
 | `field_options.py` | Filter dropdown vocabularies |
 | `generate_placeholders.py` | Generates stand-in case images and the face reference illustration |
 | `build.py` | Deployment build step (images + database) |
