@@ -143,7 +143,7 @@ taking the whole app down. Startup failing shouldn't mean the login page 500s.
 | `field_options.py` | Filter dropdown vocabularies |
 | `generate_placeholders.py` | Generates stand-in case images and the face reference illustration |
 | `build.py` | Deployment build step (images + database) |
-| `create_account.py` | Creates a local account from the host shell — the account path while self-service registration is closed |
+| `create_account.py` | Creates local accounts and grants the administrator role, from the host shell |
 | `tests/` | pytest suite covering the auth controls and image-path containment |
 | `region-editor.html` | Visual editor for authoring the anatomy diagram polygons |
 | `index.html` / `script.js` / `styles.css` | Single-page frontend |
@@ -171,7 +171,19 @@ uvicorn app:app --reload --host 127.0.0.1 --port 8001
 Open <http://127.0.0.1:8001> and sign in with the account you just created.
 
 `create_account.py` prompts for the password rather than taking it as an argument, so
-it stays out of shell history. `python create_account.py --list` shows what exists. If
+it stays out of shell history. `python create_account.py --list` shows what exists and
+which accounts are administrators.
+
+There are two kinds of account. An **administrator** may edit the case record — reorder
+and relabel a case's photographs; an ordinary account only reads. Nobody is an
+administrator unless named as one, including on an upgrade, where every existing account
+defaults to reader:
+
+```bash
+python create_account.py curator --admin
+python create_account.py --promote yourname
+python create_account.py --demote yourname
+``` If
 you would rather have the Register button back for local work, set
 `ENTDATABASE_OPEN_REGISTRATION=1` instead — see [Security](#security) for why it is off
 by default.
@@ -405,6 +417,8 @@ Implemented:
 - Parameterized SQL throughout; user-generated text HTML-escaped before rendering.
 - Session tokens in `HttpOnly`, `SameSite=Lax` cookies.
 - Ownership checks on destructive actions.
+- An administrator role separate from ordinary accounts, so that editing the case record
+  is not available to every signed-in user. Granted only from the host shell.
 - Authenticated by default — every read endpoint (search, case detail, images, filters,
   anatomy, comments) requires a session; there is no exception list.
 - CORS restricted to an explicit origin allowlist (`ENTDATABASE_ALLOWED_ORIGINS`) with
@@ -422,7 +436,8 @@ Implemented:
 
 Not implemented — this is a prototype, and these are known gaps rather than oversights:
 
-- No SSO, no role-based access control, no access logging.
+- No SSO and no access logging. The only role distinction is administrator versus
+  reader; there is no per-case or per-group authorization.
 - No rate limiting on authentication.
 - Authorization is all-or-nothing: any account reaches every case.
 - Session expiry is absolute, not idle-based — a session ends `ENTDATABASE_SESSION_TTL_HOURS`

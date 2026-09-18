@@ -568,10 +568,12 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )
+    migrate_users_to_roles(conn)
     conn.execute(SESSIONS_DDL)
     migrate_sessions_to_expiring(conn)
     conn.execute(
@@ -598,6 +600,26 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
         """
+    )
+
+
+def migrate_users_to_roles(conn: sqlite3.Connection) -> None:
+    """Add the administrator flag to a users table created before it existed.
+
+    Added rather than rebuilt, unlike the sessions migration: a session is
+    disposable and an account is not. Existing accounts default to 0, so an
+    upgrade grants nobody anything — the first administrator is named
+    deliberately with create_account.py.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    if "is_admin" in columns:
+        return
+    conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    print(
+        "[entdatabase] users table gained an is_admin flag; every existing account "
+        "defaults to non-administrator. Promote one with "
+        "`python create_account.py --promote <username>`.",
+        file=sys.stderr,
     )
 
 
@@ -703,7 +725,8 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
             return None
         row = conn.execute(
             f"""
-            SELECT users.id, users.username, ({EXPIRED_SESSION_CLAUSE}) AS expired
+            SELECT users.id, users.username, users.is_admin,
+                   ({EXPIRED_SESSION_CLAUSE}) AS expired
             FROM sessions
             JOIN users ON users.id = sessions.user_id
             WHERE sessions.token = ?
@@ -728,7 +751,8 @@ def demo_mode_enabled() -> bool:
     return os.getenv("ENTDATABASE_DEMO_MODE") == "1"
 
 
-DEMO_USER: dict[str, Any] = {"id": 0, "username": "demo"}
+# The shared demo account browses; it never administers anything.
+DEMO_USER: dict[str, Any] = {"id": 0, "username": "demo", "is_admin": 0}
 
 
 def require_user(request: Request) -> sqlite3.Row | dict[str, Any]:
@@ -741,6 +765,25 @@ def require_user(request: Request) -> sqlite3.Row | dict[str, Any]:
     if demo_mode_enabled():
         return DEMO_USER
     raise HTTPException(status_code=401, detail="Login required.")
+
+
+def require_admin(request: Request) -> sqlite3.Row | dict[str, Any]:
+    """An administrator edits the case record; an ordinary user only reads it.
+
+    Separate from require_user() rather than folded into it, because the
+    distinction is the point: every account can reach every case, so without
+    this any of the twenty-odd users could reorder anybody's photographs.
+
+    A 403 rather than a 404: unlike the development routes, these endpoints are
+    a permanent part of the application and the interface already knows they
+    exist. Hiding them would make a permissions problem look like a bug.
+    """
+    user = require_user(request)
+    if not user["is_admin"]:
+        raise HTTPException(
+            status_code=403, detail="This action needs an administrator account."
+        )
+    return user
 
 
 def dev_tools_enabled() -> bool:
@@ -1332,6 +1375,7 @@ def get_me(request: Request) -> dict[str, Any]:
         "username": user["username"] if user is not None else None,
         "demo": user is None and demo_mode_enabled(),
         "registration_open": open_registration_enabled(),
+        "is_admin": bool(user["is_admin"]) if user is not None else False,
     }
 
 

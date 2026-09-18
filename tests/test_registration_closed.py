@@ -67,6 +67,7 @@ def test_me_reports_whether_registration_is_open(client, monkeypatch):
         "username": None,
         "demo": False,
         "registration_open": False,
+        "is_admin": False,
     }
 
     monkeypatch.setenv("ENTDATABASE_OPEN_REGISTRATION", "1")

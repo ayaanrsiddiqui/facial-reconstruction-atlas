@@ -8,9 +8,16 @@ host, against the same database the application reads.
 The password is never taken as an argument — it is prompted for, so it does
 not land in shell history or in the process list.
 
+An administrator may edit the case record — reorder and relabel a case's
+photographs. An ordinary account only reads. Nobody is an administrator unless
+named as one here.
+
 Usage:
-    python create_account.py <username>     # prompts for the password twice
-    python create_account.py --list         # show existing accounts
+    python create_account.py <username>             # prompts for the password twice
+    python create_account.py <username> --admin     # ... as an administrator
+    python create_account.py --promote <username>
+    python create_account.py --demote <username>
+    python create_account.py --list
 """
 
 from __future__ import annotations
@@ -48,7 +55,7 @@ def list_accounts() -> int:
     with _connect() as conn:
         ensure_auth_schema(conn)
         rows = conn.execute(
-            "SELECT username, created_at FROM users ORDER BY created_at, username"
+            "SELECT username, is_admin, created_at FROM users ORDER BY created_at, username"
         ).fetchall()
     print(f"Database: {DB_PATH}")
     if not rows:
@@ -56,11 +63,27 @@ def list_accounts() -> int:
         return 0
     print(f"{len(rows)} account(s):")
     for row in rows:
-        print(f"  {row['username']}  (created {row['created_at']})")
+        role = "administrator" if row["is_admin"] else "reads only"
+        print(f"  {row['username']:24} {role:14} (created {row['created_at']})")
     return 0
 
 
-def create_account(username: str) -> int:
+def set_admin(username: str, *, is_admin: bool) -> int:
+    with _connect() as conn:
+        ensure_auth_schema(conn)
+        changed = conn.execute(
+            "UPDATE users SET is_admin = ? WHERE username = ?",
+            (1 if is_admin else 0, username),
+        ).rowcount
+        conn.commit()
+    if not changed:
+        print(f"Refused: no account named {username!r}.", file=sys.stderr)
+        return 2
+    print(f"{username!r} is now {'an administrator' if is_admin else 'a reader'}.")
+    return 0
+
+
+def create_account(username: str, *, is_admin: bool = False) -> int:
     try:
         username = validate_username(username)
     except HTTPException as exc:
@@ -86,12 +109,13 @@ def create_account(username: str) -> int:
             print(f"Refused: an account named {username!r} already exists.", file=sys.stderr)
             return 2
         conn.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username, hash_password(password)),
+            "INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)",
+            (username, hash_password(password), 1 if is_admin else 0),
         )
         conn.commit()
 
-    print(f"Created {username!r} in {DB_PATH}.")
+    role = "administrator" if is_admin else "reads only"
+    print(f"Created {username!r} ({role}) in {DB_PATH}.")
     return 0
 
 
@@ -99,11 +123,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("username", nargs="?", help="account to create")
-    group.add_argument(
-        "--list", action="store_true", help="list existing accounts and exit"
+    group.add_argument("--list", action="store_true", help="list accounts and exit")
+    group.add_argument("--promote", metavar="USERNAME", help="grant administrator")
+    group.add_argument("--demote", metavar="USERNAME", help="revoke administrator")
+    parser.add_argument(
+        "--admin", action="store_true", help="create the account as an administrator"
     )
     args = parser.parse_args()
-    return list_accounts() if args.list else create_account(args.username)
+
+    if args.list:
+        return list_accounts()
+    if args.promote:
+        return set_admin(args.promote, is_admin=True)
+    if args.demote:
+        return set_admin(args.demote, is_admin=False)
+    return create_account(args.username, is_admin=args.admin)
 
 
 if __name__ == "__main__":
