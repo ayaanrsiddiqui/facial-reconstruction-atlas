@@ -29,7 +29,7 @@ from image_enumeration import (
     enumerate_case_images,
     index_case_folders,
 )
-from import_patient_log import SEED_PATIENTS, format_locations_display
+from import_patient_log import SEED_PATIENTS, XLSX_PATH, format_locations_display
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("ENTDATABASE_DB_PATH", BASE_DIR / "metadata.db"))
@@ -48,6 +48,61 @@ def database_writes_allowed() -> bool:
     if os.getenv("ENTDATABASE_ALLOW_DB_WRITES") == "1":
         return True
     return os.getenv("VERCEL") != "1"
+
+SAMPLE_LOG = BASE_DIR / "sample_data" / "patient_log.xlsx"
+
+
+def public_deployment() -> bool:
+    """Whether this instance is reachable by anyone on the internet.
+
+    Vercel sets VERCEL itself, so the public demonstration instance is covered
+    without anyone having to remember a flag — which is the point, since the
+    failure this guards against is somebody forgetting. ENTDATABASE_PUBLIC_DEMO
+    covers a publicly reachable host that is not Vercel.
+    """
+    return os.getenv("VERCEL") == "1" or os.getenv("ENTDATABASE_PUBLIC_DEMO") == "1"
+
+
+def _file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def require_fabricated_data_only() -> None:
+    """Refuse to start a public instance holding anything but the sample data.
+
+    The public repository contains only the fabricated twelve-case log, and the
+    images are drawn by generate_placeholders.py, so this is already true by
+    construction. It is checked anyway: "the real case log cannot reach this
+    deployment" is a property of how the repository is arranged, which a stray
+    environment variable or a misplaced file would quietly undo, and the cost of
+    being wrong once is patient data on a public URL.
+
+    Raises rather than degrading. A public instance that cannot prove its data
+    is fabricated should serve nothing at all.
+    """
+    if not public_deployment():
+        return
+
+    if not SAMPLE_LOG.is_file():
+        raise RuntimeError(
+            f"Public deployment: {SAMPLE_LOG} is missing, so the case log that was "
+            "loaded cannot be shown to be the fabricated sample set. Refusing to start."
+        )
+    if _file_digest(XLSX_PATH) != _file_digest(SAMPLE_LOG):
+        raise RuntimeError(
+            f"Public deployment: loaded the case log {XLSX_PATH}, which is not the "
+            f"fabricated sample set at {SAMPLE_LOG}. Refusing to start — a public "
+            "deployment serves fabricated data only."
+        )
+    if IMAGE_ROOT != BASE_DIR and BASE_DIR not in IMAGE_ROOT.parents:
+        raise RuntimeError(
+            f"Public deployment: ENTDATABASE_IMAGE_ROOT is {IMAGE_ROOT}, outside the "
+            "deployment directory. Refusing to start — a public deployment serves "
+            "generated placeholder images only, never a real image store."
+        )
+
+
+require_fabricated_data_only()
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 

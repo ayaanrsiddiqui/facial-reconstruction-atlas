@@ -219,6 +219,7 @@ Relevant environment variables, all optional:
 | `ENTDATABASE_SESSION_TTL_HOURS` | You | `12` | How long a session stays valid server-side, and how long the cookie is set for. A value that is not a positive whole number stops the app at startup rather than falling back |
 | `ENTDATABASE_DEV_TOOLS` | You | unset | Set to `1` to expose the region editor (`/region-editor`, `/api/dev/face-regions`). Unset, those routes return 404; set, they still require a logged-in user |
 | `ENTDATABASE_ALLOW_DB_WRITES` | `build.py` | unset | Opts the build process back into writes despite `VERCEL` being set |
+| `ENTDATABASE_PUBLIC_DEMO` | You | unset | Set to `1` on a publicly reachable host that is not Vercel, to apply the fabricated-data-only check below. Vercel sets `VERCEL` itself, so the demo is covered without it |
 | `ENTDATABASE_XLSX_PATH` | You | auto-detected | Points the importer at a specific spreadsheet instead of the auto-detected default |
 | `VERCEL` | Vercel itself | — | Detected by `app.py` to switch SQLite to read-only mode at runtime |
 
@@ -239,6 +240,26 @@ with `create_account.py`.
 and comments there reset whenever the instance recycles. That is intended for a
 throwaway demo, not a bug — but it does mean an account made on the demo will stop
 working without warning.
+
+### A public deployment carries fabricated data, or it does not start
+
+A publicly reachable instance — `VERCEL` set, or `ENTDATABASE_PUBLIC_DEMO=1` — checks two
+things at import, before it serves anything:
+
+1. The case log it loaded is **byte-identical** to `sample_data/patient_log.xlsx`.
+2. `ENTDATABASE_IMAGE_ROOT` is inside the deployment directory, so it cannot be pointed at
+   a real image store.
+
+Either failing raises and the process stops. It does not fall back, warn, or serve a
+subset: an instance that cannot show its data is fabricated serves nothing.
+
+This is already true by construction — the only case log in this repository is the
+fabricated twelve, and the images are drawn by `generate_placeholders.py` — but that is a
+property of how the repository is arranged, which a stray file or an environment variable
+could quietly undo. The check runs during the build as well as at runtime, so a deploy
+carrying the wrong spreadsheet fails instead of publishing it.
+
+An internal deployment is unaffected. It is the one that is supposed to hold real data.
 
 ## Sample data
 
@@ -433,6 +454,9 @@ Implemented:
 - An administrator role separate from ordinary accounts, so that editing the case record
   is not available to every signed-in user. Granted only from the host shell, and every
   edit records which account made it.
+- A publicly reachable deployment refuses to start unless its case log is byte-identical
+  to the fabricated sample and its image root is inside the deployment — see
+  [Deployment](#a-public-deployment-carries-fabricated-data-or-it-does-not-start).
 - Authenticated by default — every read endpoint (search, case detail, images, filters,
   anatomy, comments) requires a session; there is no exception list.
 - CORS restricted to an explicit origin allowlist (`ENTDATABASE_ALLOWED_ORIGINS`) with
